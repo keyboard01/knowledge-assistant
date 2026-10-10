@@ -97,7 +97,6 @@ ASSISTANT_DEMO_PASSWORD=<演示账号密码，可留空>
 ANYTHINGLLM_API_KEY=<AnythingLLM 开发者 API Key，不用内核可留空>
 ```
 
-> `deploy\.env` 已被 `.gitignore` 排除，**不要把真实值提交或分享**。
 
 ### 2. 一键启动（推荐）
 
