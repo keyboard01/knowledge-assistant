@@ -58,7 +58,7 @@ AnythingLLM 内核 (127.0.0.1:3002)（可选）
 ## 三、目录结构
 
 ```
-backend/     Spring Boot 后端（src/main/java/com/hykj/assistant/**）
+backend/     Spring Boot 后端（src/main/java/io/github/keyboard01/assistant/**）
 frontend/    Vue 3 前端
 deploy/      启动脚本、.env.example、内核启动脚本
 docs/        架构说明 / 接口契约 / 部署与启动

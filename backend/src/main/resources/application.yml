@@ -1,5 +1,5 @@
 server:
-  # 9090 而非 8080：本机 8080 被另一个项目（HYKJ MES，IntelliJ 里跑的 com.hykj.HykjMesApplication）占用。
+  # 9090 而非 8080：本机 8080 已被另一个项目占用。
   # 改这里必须同步改 frontend/vite.config.js 的代理目标与 tools/*.ps1 里的 API 基址。
   port: 9090
   address: 127.0.0.1
@@ -43,4 +43,4 @@ assistant:
 logging:
   level:
     root: INFO
-    com.hykj.assistant: DEBUG
+    io.github.keyboard01.assistant: DEBUG

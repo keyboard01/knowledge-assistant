@@ -11,7 +11,7 @@
     <relativePath/>
   </parent>
 
-  <groupId>com.hykj</groupId>
+  <groupId>io.github.keyboard01</groupId>
   <artifactId>knowledge-assistant</artifactId>
   <version>0.1.0-SNAPSHOT</version>
   <name>knowledge-assistant</name>
