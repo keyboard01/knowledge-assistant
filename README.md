@@ -188,7 +188,21 @@ pwsh tools\run-acceptance.ps1 -SkipSlow
 
 ---
 
-## 十、安全提示
+## 十、文档索引
+
+| 文档 | 内容 |
+|---|---|
+| [`docs/功能说明.md`](docs/功能说明.md) | 能做什么、怎么用、边界在哪 |
+| [`docs/交付部署.md`](docs/交付部署.md) | 从零部署：拉镜像、起容器、构建、首次配置（含 docker 命令） |
+| [`docs/架构说明.md`](docs/架构说明.md) | 分层与依赖方向、检索链路、权限边界、已知偏离 |
+| [`docs/接口契约.md`](docs/接口契约.md) | 前后端接口与字段口径 |
+| [`docs/部署与启动.md`](docs/部署与启动.md) | 分步启动与排障 |
+
+## 十一、许可
+
+本项目以 [MIT](LICENSE) 许可开源。
+
+## 十二、安全提示
 
 - 所有密钥只存在服务端（`deploy/.env` 或数据库 `app_setting`），接口只回显掩码。
 - `deploy/.env`、`*.log`、`target/`、`node_modules/` 已在 `.gitignore` 中排除。
