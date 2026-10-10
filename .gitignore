@@ -1,0 +1,21 @@
+# ---- 密钥与本地配置（绝不入库）----
+deploy/.env
+.env
+.pg_pw_tmp
+
+# ---- 运行时 / 构建产物 ----
+target/
+dist/
+logs/
+*.log
+*.pid
+__pycache__/
+node_modules/
+
+# ---- 编辑器 / 操作系统 ----
+.idea/
+.vscode/
+*.iml
+*.swp
+.DS_Store
+Thumbs.db

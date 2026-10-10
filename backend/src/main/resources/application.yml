@@ -1,0 +1,46 @@
+server:
+  # 9090 而非 8080：本机 8080 被另一个项目（HYKJ MES，IntelliJ 里跑的 com.hykj.HykjMesApplication）占用。
+  # 改这里必须同步改 frontend/vite.config.js 的代理目标与 tools/*.ps1 里的 API 基址。
+  port: 9090
+  address: 127.0.0.1
+
+spring:
+  application:
+    name: knowledge-assistant
+  datasource:
+    url: jdbc:postgresql://127.0.0.1:5432/assistant
+    username: assistant
+    password: ${PG_PASSWORD:}
+    hikari:
+      maximum-pool-size: 5
+      connection-timeout: 5000
+  mvc:
+    problemdetails:
+      enabled: true
+  servlet:
+    multipart:
+      # 浏览器上传（P1）：默认 1MB 太小，放到 50MB。这是"上传入库"的上限，
+      # 与查看入口的 20MB 上限（那是"下载查看"）各自独立。
+      max-file-size: 50MB
+      max-request-size: 52MB
+  sql:
+    init:
+      mode: always
+      # Windows 下 JVM 默认字符集是 GBK，不显式指定会把 UTF-8 的 schema.sql 读成乱码写进库
+      encoding: UTF-8
+      schema-locations: classpath:db/schema.sql
+      continue-on-error: false
+
+assistant:
+  retrieval:
+    # 检索通道：local = 自建（本地向量 + 关键词 + RRF 融合，默认，S3 的落点）；
+    # kernel = AnythingLLM 原生 vector-search（对照/回退用，分数被内核压扁过，不适合当阈值判据）
+    mode: local
+    # 查询改写（P1）：on = 用生成模型产出 2~3 条变体，与原问题并行召回后多路融合。
+    # 默认 off——改写要多一次模型调用，且属于"快速通道也要更好"那类，由运维按需开启；失败一律 fail-open。
+    rewrite: off
+
+logging:
+  level:
+    root: INFO
+    com.hykj.assistant: DEBUG

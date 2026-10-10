@@ -1,0 +1,166 @@
+{
+  "_comment": [
+    "P1 验收题集（T11）：30 题 = 应当作答 20 题（制度流程为主，12/4/4）+ 库里没有 5 题 + 当前身份无权限 5 题。",
+    "题目与答案都对着 knowledge/ 里的验收语料写，事实可逐条回原文核对；不是凭空造的句子。",
+    "expect.allowedDocNos：答案至少要引到其中一份（只查'有没有引用'太松，引错文档也能过）；多引不判失败。",
+    "expect.mention：答案里必须出现的关键事实（数字/术语），比对前会去掉空白，避免'500元'与'500 元'被当成两回事。",
+    "expect.forbiddenDocNos：无论作答还是拒答都不允许被引用的文档编号，权限题用它钉住'被挡的文档没有漏出来'。",
+    "expect.noLeak：只存在于被挡文档里的词。不能放问题里出现过的词——用户自己打的字不算泄露，写进去只会让断言恒真（脚本会当场点出来）。",
+    "permission=true 表示这题该走'你没有权限'这条路，而不是'库里没有'：这两句对用户意味着完全不同的下一步。",
+    "knownGap：已登记的缺口 + 根因。脚本单独统计、不算失败，但通过时会提醒把这条登记删掉——它是'如实记录'，不是'跳过'。"
+  ],
+  "questions": [
+    {
+      "id": "Q01", "domain": "policy", "asker": "admin",
+      "question": "出差住宿费标准是多少",
+      "expect": { "outcome": "answered", "allowedDocNos": ["QM-ZD-2026-003"], "mention": ["V3.2", "V2.8"] }
+    },
+    {
+      "id": "Q02", "domain": "policy", "asker": "admin",
+      "question": "一线城市的住宿标准是多少钱一晚",
+      "expect": { "outcome": "answered", "allowedDocNos": ["QM-ZD-2026-003"], "mention": ["500"] }
+    },
+    {
+      "id": "Q03", "domain": "policy", "asker": "admin",
+      "question": "哪些城市算一线城市",
+      "expect": { "outcome": "answered", "allowedDocNos": ["QM-ZD-2026-003"], "mention": ["北京", "上海", "广州", "深圳"] }
+    },
+    {
+      "id": "Q04", "domain": "policy", "asker": "admin",
+      "question": "出差期间的市内交通费怎么报销",
+      "expect": { "outcome": "answered", "allowedDocNos": ["QM-ZD-2026-003"], "mention": ["凭票"] }
+    },
+    {
+      "id": "Q05", "domain": "policy", "asker": "admin",
+      "question": "出差伙食补贴一天多少钱",
+      "expect": { "outcome": "answered", "allowedDocNos": ["QM-ZD-2026-003"], "mention": ["120"] }
+    },
+    {
+      "id": "Q06", "domain": "policy", "asker": "admin",
+      "question": "报销单据要在多少天内提交给财务部",
+      "expect": { "outcome": "answered", "allowedDocNos": ["QM-ZD-2026-003"], "mention": ["30"] }
+    },
+    {
+      "id": "Q07", "domain": "policy", "asker": "admin",
+      "question": "超过多少天提交的报销财务部就不受理了",
+      "expect": { "outcome": "answered", "allowedDocNos": ["QM-ZD-2026-003"], "mention": ["90"] }
+    },
+    {
+      "id": "Q08", "domain": "policy", "asker": "admin",
+      "question": "差旅报销需要提交哪些凭证和单据",
+      "expect": { "outcome": "answered", "allowedDocNos": ["QM-ZD-2026-003"], "mention": ["发票", "行程单"] }
+    },
+    {
+      "id": "Q09", "domain": "policy", "asker": "admin",
+      "question": "哪些费用不予报销",
+      "expect": { "outcome": "answered", "allowedDocNos": ["QM-ZD-2026-003"], "mention": ["私人"] }
+    },
+    {
+      "id": "Q10", "domain": "policy", "asker": "admin",
+      "question": "单笔报销超过多少钱需要分管副总审批",
+      "expect": { "outcome": "answered", "allowedDocNos": ["QM-ZD-2026-003"], "mention": ["5000"] }
+    },
+    {
+      "id": "Q11", "domain": "policy", "asker": "admin",
+      "question": "总监及以上人员出差可以乘坐高铁一等座吗",
+      "expect": { "outcome": "answered", "allowedDocNos": ["QM-ZD-2026-003"], "mention": ["一等座"] }
+    },
+    {
+      "id": "Q12", "domain": "policy", "asker": "admin",
+      "question": "设备停机的上报时限是怎么规定的",
+      "expect": { "outcome": "answered", "allowedDocNos": ["QM-ZD-2026-011"], "mention": ["5分钟", "30分钟"] }
+    },
+    {
+      "id": "Q13", "domain": "policy", "asker": "admin",
+      "question": "设备停机分几个等级，分别怎么判定",
+      "expect": { "outcome": "answered", "allowedDocNos": ["QM-ZD-2026-011"], "mention": ["A级", "B级", "C级"] }
+    },
+    {
+      "id": "Q14", "domain": "tech", "asker": "admin",
+      "question": "CNC-850 的 X Y Z 轴行程分别是多少",
+      "expect": { "outcome": "answered", "allowedDocNos": ["QM-JS-CNC850-2025"], "mention": ["850", "520", "560"] }
+    },
+    {
+      "id": "Q15", "domain": "tech", "asker": "admin",
+      "question": "CNC-850 主轴转速范围是多少",
+      "expect": { "outcome": "answered", "allowedDocNos": ["QM-JS-CNC850-2025"], "mention": ["12000"] }
+    },
+    {
+      "id": "Q16", "domain": "tech", "asker": "admin",
+      "question": "CNC-850 对压缩空气的压力和品质有什么要求",
+      "expect": { "outcome": "answered", "allowedDocNos": ["QM-JS-CNC850-2025"], "mention": ["0.6"] }
+    },
+    {
+      "id": "Q17", "domain": "tech", "asker": "admin",
+      "question": "液压站 HYZ-40 的系统工作压力是多少，溢流阀设定多少",
+      "expect": { "outcome": "answered", "allowedDocNos": ["QM-JS-HYZ40-2026"], "mention": ["5.5"] }
+    },
+    {
+      "id": "Q18", "domain": "repair", "asker": "admin",
+      "question": "CNC-850 出现 ALM-3305 报警怎么处理",
+      "expect": { "outcome": "answered", "allowedDocNos": ["QM-WX-CNC850-2026"], "mention": ["0.45"] }
+    },
+    {
+      "id": "Q19", "domain": "repair", "asker": "admin",
+      "question": "空压机 GA-75 多少小时需要更换油气分离器",
+      "expect": { "outcome": "answered", "allowedDocNos": ["QM-WX-GA75-2026"], "mention": ["4000"] }
+    },
+    {
+      "id": "Q20", "domain": "repair", "asker": "admin",
+      "question": "空压机 GA-75 皮带张紧度多少算合格",
+      "expect": { "outcome": "answered", "allowedDocNos": ["QM-WX-GA75-2026"], "mention": ["30"] }
+    },
+
+    {
+      "id": "Q21", "domain": "policy", "asker": "admin",
+      "question": "公司食堂今天的菜单是什么",
+      "expect": { "outcome": "refused" }
+    },
+    {
+      "id": "Q22", "domain": "policy", "asker": "admin",
+      "question": "2026 年春节放假安排是怎样的",
+      "expect": { "outcome": "refused" }
+    },
+    {
+      "id": "Q23", "domain": "policy", "asker": "admin",
+      "question": "公司班车每天早上几点发车",
+      "expect": { "outcome": "refused" }
+    },
+    {
+      "id": "Q24", "domain": "tech", "asker": "admin",
+      "question": "公司的 WIFI 密码是多少",
+      "expect": { "outcome": "refused" }
+    },
+    {
+      "id": "Q25", "domain": "repair", "asker": "admin",
+      "question": "厂区停车位怎么申请",
+      "expect": { "outcome": "refused" }
+    },
+
+    {
+      "id": "Q26", "domain": "policy", "asker": "demo",
+      "question": "2026年度薪酬结构调整方案的调薪幅度是多少",
+      "expect": { "outcome": "refused", "permission": true, "forbiddenDocNos": ["QM-ZD-2026-021"], "noLeak": ["18000", "26000", "+8%", "带宽", "QM-ZD-2026-021"] }
+    },
+    {
+      "id": "Q27", "domain": "policy", "asker": "demo",
+      "question": "P5 高级工程师的薪酬带宽是多少",
+      "expect": { "outcome": "refused", "permission": true, "forbiddenDocNos": ["QM-ZD-2026-021"], "noLeak": ["18000", "26000", "+8%", "QM-ZD-2026-021"] }
+    },
+    {
+      "id": "Q28", "domain": "policy", "asker": "demo",
+      "question": "薪酬调整草案什么时候开始执行",
+      "expect": { "outcome": "refused", "permission": true, "forbiddenDocNos": ["QM-ZD-2026-021"], "noLeak": ["2026年7月1日", "7月1日", "QM-ZD-2026-021"] }
+    },
+    {
+      "id": "Q29", "domain": "policy", "asker": "demo",
+      "question": "这次薪酬调整会涉及岗位撤销和人员优化吗",
+      "expect": { "outcome": "refused", "permission": true, "forbiddenDocNos": ["QM-ZD-2026-021"], "noLeak": ["不涉及", "QM-ZD-2026-021"] }
+    },
+    {
+      "id": "Q30", "domain": "policy", "asker": "demo",
+      "question": "薪酬方案对人资部成员和总监的查阅有什么保密要求",
+      "expect": { "outcome": "refused", "permission": true, "forbiddenDocNos": ["QM-ZD-2026-021"], "noLeak": ["秘密级信息", "书面同意", "截屏", "QM-ZD-2026-021"] }
+    }
+  ]
+}

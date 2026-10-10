@@ -1,0 +1,15 @@
+{
+  "_comment": "AC-P1-006 断链重试的测试夹具：单独一个根目录，指向它做同步，验收语料不会被污染。",
+  "documents": [
+    {
+      "file": "断链重试样例_V9.9.txt",
+      "domainCode": "repair",
+      "docNo": "QM-WX-OFFLINE-TEST",
+      "title": "断链重试样例",
+      "version": "V9.9",
+      "docStatus": "测试",
+      "secrecy": "内部公开",
+      "ownerDept": "设备维修部"
+    }
+  ]
+}

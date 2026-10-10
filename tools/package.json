@@ -1,0 +1,13 @@
+{
+  "name": "assistant-tools",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "验收脚本的运行时依赖。只装 playwright-core：浏览器用本机 Edge，不下载 Playwright 自带内核。",
+  "scripts": {
+    "verify:ask": "node verify-ask-page.mjs"
+  },
+  "dependencies": {
+    "playwright-core": "^1.62.0"
+  }
+}
