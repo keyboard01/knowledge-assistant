@@ -24,3 +24,6 @@ Thumbs.db
 知识库产品设计方案.md
 需求说明与落地清单.md
 启动Codex终端.bat
+
+# 前端构建缓存
+.vite/
