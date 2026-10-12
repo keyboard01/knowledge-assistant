@@ -1,7 +1,9 @@
 package io.github.keyboard01.assistant.parse;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.List;
 
@@ -12,25 +14,56 @@ import org.junit.jupiter.api.Test;
  * 切分粒度是检索质量的第一变量（见《需求说明与落地清单》§11.1 的实测：同一句"一线城市指北京、上海、
  * 广州、深圳。"埋在整页 802 字里余弦只有 0.21，独立成块是 0.75）。
  *
- * <p>这几条把四条规则钉死：不跨语义单元合并、长段按句拆、碎句并入上一块、标题下无正文则标题自成一块。
- * 粒度一旦回退，后面怎么调阈值都是换一种错法。</p>
+ * <p>这几条把切分规则钉死：token 预算（min/target/max）、长段落按 target 打包、同章节路径同类型的相邻
+ * 短块合并、overlap、表格拆行重复表头、标题下无正文则标题自成一块。粒度一旦回退，后面怎么调阈值都是
+ * 换一种错法。</p>
  */
 class ChunkSplitterTest {
 
+    private static ParsedChunk paragraph(String text, int page) {
+        return ChunkSplitter.split(List.of(new ParsedBlock(ParsedBlock.Kind.PARAGRAPH, text, page, 0))).get(0);
+    }
+
     @Test
-    @DisplayName("连续短段各自成块，绝不打包——打包正是把定义句重新埋回长块的元凶")
-    void shortParagraphsAreNotPackedTogether() {
+    @DisplayName("同一章节路径、同类型、同页的相邻短段落会合并（对标 movo 的 merge）")
+    void mergesAdjacentShortParagraphsInSameSection() {
         List<ParsedBlock> blocks = List.of(
                 new ParsedBlock(ParsedBlock.Kind.PARAGRAPH, "注 2：一线城市指北京、上海、广州、深圳。", 1, 0),
                 new ParsedBlock(ParsedBlock.Kind.PARAGRAPH, "住宿标准见下表。", 1, 0));
 
         List<ParsedChunk> chunks = ChunkSplitter.split(blocks);
 
-        assertEquals(2, chunks.size());
-        assertEquals("注 2：一线城市指北京、上海、广州、深圳。", chunks.get(0).content());
-        assertEquals("住宿标准见下表。", chunks.get(1).content());
+        assertEquals(1, chunks.size(), "两段都短且同路径同页，应合并成一块");
+        assertEquals("注 2：一线城市指北京、上海、广州、深圳。\n\n住宿标准见下表。", chunks.get(0).content());
         assertEquals(1, chunks.get(0).pageFrom());
         assertEquals(1, chunks.get(0).pageTo());
+    }
+
+    @Test
+    @DisplayName("不同章节路径的相邻短段不合并——路径不同就是不同语义域")
+    void doesNotMergeAcrossSections() {
+        List<ParsedBlock> blocks = List.of(
+                new ParsedBlock(ParsedBlock.Kind.HEADING, "1 总则", 1, 0),
+                new ParsedBlock(ParsedBlock.Kind.PARAGRAPH, "甲。", 1, 0),
+                new ParsedBlock(ParsedBlock.Kind.HEADING, "2 附则", 1, 0),
+                new ParsedBlock(ParsedBlock.Kind.PARAGRAPH, "乙。", 1, 0));
+
+        List<ParsedChunk> chunks = ChunkSplitter.split(blocks);
+
+        assertEquals(2, chunks.size());
+        assertEquals("甲。", chunks.get(0).content());
+        assertEquals("乙。", chunks.get(1).content());
+        assertNotEquals(chunks.get(0).sectionPath(), chunks.get(1).sectionPath());
+    }
+
+    @Test
+    @DisplayName("跨页的相邻短段不合并——别把两页的话粘一起")
+    void doesNotMergeAcrossPages() {
+        List<ParsedBlock> blocks = List.of(
+                new ParsedBlock(ParsedBlock.Kind.PARAGRAPH, "甲。", 1, 0),
+                new ParsedBlock(ParsedBlock.Kind.PARAGRAPH, "乙。", 2, 0));
+
+        assertEquals(2, ChunkSplitter.split(blocks).size());
     }
 
     @Test
@@ -48,27 +81,40 @@ class ChunkSplitterTest {
     }
 
     @Test
-    @DisplayName("超过 maxChars 的段落按句拆：长句各自成块，碎句并回上一块")
-    void splitsLongParagraphBySentence() {
+    @DisplayName("超预算的长段落按 target 打包，碎尾并回上一片")
+    void packsLongParagraphTowardTarget() {
         String a = "甲".repeat(58) + "。";
         String b = "乙".repeat(58) + "。";
         String c = "丙".repeat(58) + "。";
         String d = "丁".repeat(58) + "。";
         String tiny = "不适用本办法。";
         String text = a + b + c + d + tiny;
-        assertEquals(243, text.length());
 
         List<ParsedChunk> chunks = ChunkSplitter.split(List.of(new ParsedBlock(ParsedBlock.Kind.PARAGRAPH, text, 2, 0)));
 
-        assertEquals(4, chunks.size());
-        assertEquals(a, chunks.get(0).content());
-        assertEquals(b, chunks.get(1).content());
-        assertEquals(c, chunks.get(2).content());
-        assertEquals(d + tiny, chunks.get(3).content(), "不足 15 字的碎句必须并回上一块");
+        assertEquals(2, chunks.size(), "四句 + 碎尾应打包成两片，而不是逐句成块");
+        assertEquals(a + b, chunks.get(0).content(), "第一片不带 overlap");
+        assertTrue(chunks.get(1).content().contains(c), "第二片要含第三句");
+        assertTrue(chunks.get(1).content().endsWith(d + tiny), "不足 MIN_STANDALONE 的碎尾并回上一片");
     }
 
     @Test
-    @DisplayName("单句就超长时按字符硬切，不丢内容")
+    @DisplayName("相邻片段带 overlap：后一片以片尾的重复文本开头")
+    void piecesOverlapAtBoundary() {
+        String s1 = "甲".repeat(120) + "。";
+        String s2 = "乙".repeat(120) + "。";
+
+        List<ParsedChunk> chunks = ChunkSplitter.split(
+                List.of(new ParsedBlock(ParsedBlock.Kind.PARAGRAPH, s1 + s2, 1, 0)));
+
+        assertEquals(2, chunks.size());
+        assertEquals(s1, chunks.get(0).content());
+        assertTrue(chunks.get(1).content().startsWith("甲".repeat(29) + "。"),
+                "第二片应以前一片尾部的重叠文本开头");
+    }
+
+    @Test
+    @DisplayName("单句就超长时按字符硬切，不丢内容、也不加 overlap")
     void hardCutsAnOverlongSentence() {
         String monster = "甲".repeat(450);
 
@@ -78,6 +124,24 @@ class ChunkSplitterTest {
         assertEquals(200, chunks.get(0).content().length());
         assertEquals(200, chunks.get(1).content().length());
         assertEquals(50, chunks.get(2).content().length());
+    }
+
+    @Test
+    @DisplayName("表格行被拆分时，表头重复加到后续每一片前")
+    void repeatsTableHeaderWhenSplittingRow() {
+        String header = "表头";
+        String row = "甲".repeat(230) + "。";
+        String text = header + " —— " + row;
+
+        List<ParsedChunk> chunks = ChunkSplitter.split(
+                List.of(new ParsedBlock(ParsedBlock.Kind.TABLE_ROW, text, 1, 0)));
+
+        assertTrue(chunks.size() >= 2, "该行超预算，应被拆成多片");
+        assertTrue(chunks.get(0).content().startsWith(header + " —— "));
+        for (int i = 1; i < chunks.size(); i++) {
+            assertTrue(chunks.get(i).content().startsWith(header + " —— "),
+                    "第 " + (i + 1) + " 片应重复表头");
+        }
     }
 
     @Test
@@ -120,11 +184,10 @@ class ChunkSplitterTest {
     @Test
     @DisplayName("页码为 0（DOCX 无分页语义）时留空，绝不瞎填")
     void zeroPageBecomesNull() {
-        List<ParsedChunk> chunks = ChunkSplitter.split(
-                List.of(new ParsedBlock(ParsedBlock.Kind.PARAGRAPH, "无页码语义的正文。", 0, 0)));
+        ParsedChunk chunk = paragraph("无页码语义的正文。", 0);
 
-        assertNull(chunks.get(0).pageFrom());
-        assertNull(chunks.get(0).pageTo());
+        assertNull(chunk.pageFrom());
+        assertNull(chunk.pageTo());
     }
 
     @Test
@@ -146,5 +209,23 @@ class ChunkSplitterTest {
 
         assertEquals(1, chunks.size());
         assertEquals("有内容。", chunks.get(0).content());
+    }
+
+    @Test
+    @DisplayName("estimateTokens：空串为 0，中文按字、英文按词，混排相加")
+    void estimatesTokens() {
+        assertEquals(0, ChunkSplitter.estimateTokens(""));
+        assertEquals(0, ChunkSplitter.estimateTokens(null));
+        assertEquals(3, ChunkSplitter.estimateTokens("北京"));
+        assertEquals(3, ChunkSplitter.estimateTokens("hello world"));
+        assertTrue(ChunkSplitter.estimateTokens("甲".repeat(100)) > ChunkSplitter.estimateTokens("甲".repeat(10)));
+    }
+
+    @Test
+    @DisplayName("ChunkOptions.of 归一化：保证 1<=min<=target<=max，overlap<target")
+    void chunkOptionsNormalizes() {
+        assertEquals(new ChunkOptions(60, 150, 200, 30), ChunkOptions.of(60, 150, 200, 30));
+        assertEquals(new ChunkOptions(50, 50, 50, 49), ChunkOptions.of(500, 100, 50, 999));
+        assertEquals(new ChunkOptions(1, 1, 1, 0), ChunkOptions.of(0, 0, 0, -5));
     }
 }

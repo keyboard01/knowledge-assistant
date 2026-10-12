@@ -39,6 +39,15 @@ assistant:
     # 查询改写（P1）：on = 用生成模型产出 2~3 条变体，与原问题并行召回后多路融合。
     # 默认 off——改写要多一次模型调用，且属于"快速通道也要更好"那类，由运维按需开启；失败一律 fail-open。
     rewrite: off
+  chunking:
+    # 片段预算按**估算 token**计（中文≈1 字 1 token、英文按词），不是字符数。
+    # min：低于此视为“短块”，可并入同章节路径/同类型/同页的相邻块；
+    # target：长段落按句打包到的软目标；max：单片段硬上限（超长单句按字符硬切）；
+    # overlap：相邻片段保留的尾部重叠，防止答案卡在边界被切两半。
+    min-tokens: 60
+    target-tokens: 150
+    max-tokens: 200
+    overlap-tokens: 30
 
 logging:
   level:

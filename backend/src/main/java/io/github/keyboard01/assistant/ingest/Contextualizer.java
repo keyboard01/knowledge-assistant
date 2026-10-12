@@ -8,7 +8,7 @@ import io.github.keyboard01.assistant.parse.ParsedChunk;
 /**
  * 片段上下文增强的内部契约（P1 Contextual Retrieval）。
  *
- * <p>片段被切得很细（{@code ChunkSplitter.DEFAULT_MAX_CHARS = 200}），召回精度是高了，
+ * <p>片段被切得很细（默认预算约 200 token，见 {@code assistant.chunking.*}），召回精度是高了，
  * 但脱离上下文后语义不完整——"一线城市指北京、上海、广州、深圳"这种定义句一旦离开它所在的
  * 章节，模型和重排都容易看走眼。这个接口在**入库时**给每个片段补一句"文档标题 > 章节路径"级的
  * 上下文摘要，随片段一起向量化。</p>

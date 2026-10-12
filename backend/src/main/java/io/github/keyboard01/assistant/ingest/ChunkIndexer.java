@@ -43,13 +43,15 @@ public class ChunkIndexer {
     private final TextEmbedder embedder;
     private final Contextualizer contextualizer;
     private final DocumentParseService parser;
+    private final ChunkingSettings chunking;
 
     public ChunkIndexer(DocumentChunkRepository chunks, TextEmbedder embedder, Contextualizer contextualizer,
-                        DocumentParseService parser) {
+                        DocumentParseService parser, ChunkingSettings chunking) {
         this.chunks = chunks;
         this.embedder = embedder;
         this.contextualizer = contextualizer;
         this.parser = parser;
+        this.chunking = chunking;
     }
 
     public IndexResult index(long documentId, String documentTitle, Path file, boolean force)
@@ -58,7 +60,7 @@ public class ChunkIndexer {
             return new IndexResult(documentId, "SKIPPED", 0, "该格式暂不支持自建解析（只做 PDF / DOCX）");
         }
         List<ParsedBlock> blocks = parser.parse(file).blocks();
-        List<ParsedChunk> parsed = ChunkSplitter.split(blocks);
+        List<ParsedChunk> parsed = ChunkSplitter.split(blocks, chunking.options());
         if (parsed.isEmpty()) {
             throw new IllegalStateException("解析结果为空，拒绝用空结果覆盖已有片段（检查文件是否损坏）");
         }

@@ -56,10 +56,11 @@ public class IngestService {
     private final KernelGateway kernel;
     private final ChunkIndexer chunkIndexer;
     private final DocumentParseService parser;
+    private final ChunkingSettings chunking;
 
     public IngestService(DocumentRepository documents, IngestTaskRepository tasks, DomainRepository domains,
                          SettingService settingService, KernelGateway kernel, ChunkIndexer chunkIndexer,
-                         DocumentParseService parser) {
+                         DocumentParseService parser, ChunkingSettings chunking) {
         this.documents = documents;
         this.tasks = tasks;
         this.domains = domains;
@@ -67,6 +68,7 @@ public class IngestService {
         this.kernel = kernel;
         this.chunkIndexer = chunkIndexer;
         this.parser = parser;
+        this.chunking = chunking;
     }
 
     public Path sourceRoot() {
@@ -589,7 +591,7 @@ public class IngestService {
                 .map(block -> new ParsePreview.Block(block.kind().name(), block.page(), block.level(), block.text()))
                 .toList();
         return new ParsePreview(documentId, row.docNo(), row.title(), parsed.parser(), all.size(),
-                ChunkSplitter.split(all).size(), all.size() > PREVIEW_BLOCK_LIMIT, blocks);
+                ChunkSplitter.split(all, chunking.options()).size(), all.size() > PREVIEW_BLOCK_LIMIT, blocks);
     }
 
     /** 重建全部已入库文档的片段（解析器或分块规则改了以后用；内容没变的会被跳过）。 */
