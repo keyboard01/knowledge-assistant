@@ -61,8 +61,35 @@ export const authApi = {
     request('/auth/password', { method: 'POST', body: JSON.stringify({ oldPassword, newPassword }) })
 }
 
-export const settingsApi = {
-  list: () => request('/settings'),
+/** 管理面（/api/admin/**，均限 admin）：用户与角色维护。 */
+export const adminApi = {
+  users: () => request('/admin/users'),
+  roles: () => request('/admin/roles'),
+  createUser: (payload) => request('/admin/users', { method: 'POST', body: JSON.stringify(payload) }),
+  updateUser: (id, payload) => request(`/admin/users/${id}`, { method: 'PUT', body: JSON.stringify(payload) }),
+  resetPassword: (id, newPassword) =>
+    request(`/admin/users/${id}/password`, { method: 'POST', body: JSON.stringify({ newPassword }) }),
+  domainAcl: (code) => request(`/admin/domains/${code}/acl`),
+  saveDomainAcl: (code, rules) =>
+    request(`/admin/domains/${code}/acl`, { method: 'PUT', body: JSON.stringify({ rules }) }),
+  // 对外 API Key（创建响应里的 key 明文只出现一次）
+  apiKeys: () => request('/admin/api-keys'),
+  createApiKey: (payload) => request('/admin/api-keys', { method: 'POST', body: JSON.stringify(payload) }),
+  setApiKeyEnabled: (id, enabled) =>
+    request(`/admin/api-keys/${id}/enabled`, { method: 'POST', body: JSON.stringify({ enabled }) }),
+  revokeApiKey: (id) => request(`/admin/api-keys/${id}`, { method: 'DELETE' })
+}
+
+/** 钉钉登录入口（免登段免鉴权）+ 组织同步（admin）。 */
+export const dingtalkApi = {
+  enabled: () => request('/auth/dingtalk/enabled'),
+  config: () => request('/auth/dingtalk/config'),
+  callback: (authCode) =>
+    request('/auth/dingtalk/callback', { method: 'POST', body: JSON.stringify({ authCode }) }),
+  sync: () => request('/admin/dingtalk/sync', { method: 'POST' })
+}
+
+export const settingsApi = {  list: () => request('/settings'),
   save: (code, values) =>
     request(`/settings/${code}`, { method: 'PUT', body: JSON.stringify({ values }) }),
   test: (code) => request(`/settings/${code}/test`, { method: 'POST' }),
@@ -72,12 +99,10 @@ export const settingsApi = {
 export const domainsApi = {
   list: () => request('/domains'),
   selfCheck: () => request('/domains/selfcheck'),
-  provision: () => request('/domains/provision', { method: 'POST' }),
-  // 知识域管理（P1，均限 admin）
+  // 知识域管理（均限 admin）
   create: (payload) => request('/domains', { method: 'POST', body: JSON.stringify(payload) }),
   update: (code, payload) => request(`/domains/${code}`, { method: 'PUT', body: JSON.stringify(payload) }),
-  remove: (code) => request(`/domains/${code}`, { method: 'DELETE' }),
-  provisionOne: (code) => request(`/domains/${code}/provision`, { method: 'POST' })
+  remove: (code) => request(`/domains/${code}`, { method: 'DELETE' })
 }
 
 export const ingestApi = {
@@ -166,6 +191,39 @@ export const documentViewApi = {
     }
     return { blob: await response.blob(), fileName: fileNameOf(response.headers.get('Content-Disposition')) }
   }
+}
+
+/** 二进制取数（带 Bearer）。与文档预览同因：`<img src>` 不会带 Authorization 头。 */
+async function blobRequest(path) {
+  const token = getToken()
+  const headers = {}
+  if (token) headers.Authorization = `Bearer ${token}`
+  const response = await fetch(BASE + path, { headers })
+  if (response.status === 401) {
+    setToken('')
+    throw new AuthError('未登录或会话已过期')
+  }
+  if (!response.ok) {
+    let message = `HTTP ${response.status}`
+    try {
+      const body = await response.json()
+      if (body?.error) message = body.error
+    } catch {
+      // 非 JSON 错误体：保留状态码文案
+    }
+    const error = new Error(message)
+    error.status = response.status
+    throw error
+  }
+  return response.blob()
+}
+
+/** 找图：按描述检索图片素材；图片字节同样走 Blob + Authorization。 */
+export const mediaApi = {
+  search: (payload) => request('/media/search', { method: 'POST', body: JSON.stringify(payload) }),
+  thumbnail: (id) => blobRequest(`/media/${id}/thumbnail`),
+  raw: (id) => blobRequest(`/media/${id}/raw`),
+  reindex: (force = false) => request(`/media/reindex?force=${force}`, { method: 'POST' })
 }
 
 /**

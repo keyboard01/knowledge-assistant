@@ -16,21 +16,23 @@ import org.springframework.jdbc.core.RowMapper;
 import org.springframework.stereotype.Repository;
 
 import io.github.keyboard01.assistant.security.AccessFilter;
+import io.github.keyboard01.assistant.security.DocumentVisibility;
 
 @Repository
 public class DocumentRepository {
 
     public record Row(long id, String domainCode, String docNo, String title, String version,
                       String docStatus, String secrecy, String ownerDept, String sourcePath,
-                      String contentHash, Long fileSize, String mimeType, String indexStatus,
+                      String contentHash, Long fileSize, String mimeType,
                       String chunkStatus, Integer chunkCount,
-                      String kernelDocName, String anythingllmDocId, String lastError) {
+                      String lastError, String uploadedBy,
+                      String kind, String assetStatus, Integer assetCount) {
     }
 
     private static final String COLUMNS = """
             id, domain_code, doc_no, title, version, doc_status, secrecy, owner_dept, source_path,
-            content_hash, file_size, mime_type, index_status, chunk_status, chunk_count,
-            kernel_doc_name, anythingllm_doc_id, last_error
+            content_hash, file_size, mime_type, chunk_status, chunk_count,
+            last_error, uploaded_by, kind, asset_status, asset_count
             """;
 
     private static final RowMapper<Row> MAPPER = (rs, rowNum) -> new Row(
@@ -46,12 +48,13 @@ public class DocumentRepository {
             rs.getString("content_hash"),
             (Long) rs.getObject("file_size"),
             rs.getString("mime_type"),
-            rs.getString("index_status"),
             rs.getString("chunk_status"),
             rs.getInt("chunk_count"),
-            rs.getString("kernel_doc_name"),
-            rs.getString("anythingllm_doc_id"),
-            rs.getString("last_error"));
+            rs.getString("last_error"),
+            rs.getString("uploaded_by"),
+            rs.getString("kind"),
+            rs.getString("asset_status"),
+            rs.getInt("asset_count"));
 
     private final JdbcTemplate jdbc;
 
@@ -64,12 +67,28 @@ public class DocumentRepository {
     }
 
     /**
-     * 只取当前身份可见的文档（T06 的过滤条件下推）。
-     * 条件由 AccessFilter 生成、值走占位符，这里不做任何权限判断。
+     * 文档列表（先过域级 + 文档级 ACL）。
+     *
+     * <p>非管理员再收窄一层：只看到"现行 + 自己上传的草案"——别人的未审草案不该在列表里露出，
+     * 但本人要能看到自己刚交的东西。管理员看全部，否则无法在列表里审核。</p>
      */
-    public List<Row> findVisible(AccessFilter filter) {
+    public List<Row> findVisible(AccessFilter filter, String viewerUsername, boolean admin) {
+        String order = " order by d.domain_code, d.doc_no, d.version";
+        if (admin) {
+            return jdbc.query("select " + COLUMNS + " from document d where " + filter.sql() + order,
+                    MAPPER, filter.paramsArray());
+        }
+        Object[] params = append(filter.paramsArray(), viewerUsername);
         return jdbc.query("select " + COLUMNS + " from document d where " + filter.sql()
-                + " order by d.domain_code, d.doc_no, d.version", MAPPER, filter.paramsArray());
+                + " and (" + DocumentVisibility.currentSql("d") + " or d.uploaded_by = ?)" + order,
+                MAPPER, params);
+    }
+
+    private static Object[] append(Object[] base, Object extra) {
+        Object[] merged = new Object[base.length + 1];
+        System.arraycopy(base, 0, merged, 0, base.length);
+        merged[base.length] = extra;
+        return merged;
     }
 
     /**
@@ -109,59 +128,87 @@ public class DocumentRepository {
                 MAPPER, docNo, version).stream().findFirst();
     }
 
-    /** 批量反查：检索命中只带得回内核文档名，这是把片段挂回本地登记的唯一入口（T07）。 */
-    public List<Row> findByKernelDocNames(Collection<String> kernelDocNames) {
-        if (kernelDocNames == null || kernelDocNames.isEmpty()) {
+    /** 批量反查：检索命中的片段带着 {@code document_id}，这是把片段挂回本地登记的唯一入口。 */
+    public List<Row> findByIds(Collection<Long> ids) {
+        if (ids == null || ids.isEmpty()) {
             return List.of();
         }
-        String placeholders = String.join(",", Collections.nCopies(kernelDocNames.size(), "?"));
-        return jdbc.query("select " + COLUMNS + " from document where kernel_doc_name in (" + placeholders + ")",
-                MAPPER, kernelDocNames.toArray());
+        String placeholders = String.join(",", Collections.nCopies(ids.size(), "?"));
+        return jdbc.query("select " + COLUMNS + " from document where id in (" + placeholders + ")",
+                MAPPER, ids.toArray());
     }
 
     public long insert(IngestManifest.Entry entry, String domainCode, String sourcePath, String contentHash,
-                       long fileSize, String mimeType, String kernelDocName) {
+                       long fileSize, String mimeType, String uploadedBy, String kind) {
         Long id = jdbc.queryForObject("""
                 insert into document (domain_code, doc_no, title, version, doc_status, secrecy, owner_dept,
                                       source_path, content_hash, file_size, mime_type, effective_from,
-                                      effective_to, index_status, kernel_doc_name)
-                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, cast(? as date), cast(? as date), 'PENDING', ?)
+                                      effective_to, uploaded_by, kind)
+                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, cast(? as date), cast(? as date), ?, ?)
                 returning id
                 """, Long.class,
                 domainCode, entry.docNo(), entry.title(), entry.version(),
                 blankTo(entry.docStatus(), "现行"), blankTo(entry.secrecy(), "内部公开"), entry.ownerDept(),
                 sourcePath, contentHash, fileSize, mimeType,
-                blankToNull(entry.effectiveFrom()), blankToNull(entry.effectiveTo()), kernelDocName);
+                blankToNull(entry.effectiveFrom()), blankToNull(entry.effectiveTo()), uploadedBy,
+                blankTo(kind, "text"));
         return id == null ? 0L : id;
     }
 
     /** 内容或元数据变了：先更新登记，再重新入库，避免出现"半新半旧"的行。 */
     public void updateSource(long id, IngestManifest.Entry entry, String domainCode, String sourcePath,
-                             String contentHash, long fileSize, String mimeType, String kernelDocName) {
+                             String contentHash, long fileSize, String mimeType,
+                             String uploadedBy, String kind) {
         jdbc.update("""
                 update document set domain_code = ?, title = ?, doc_status = ?, secrecy = ?, owner_dept = ?,
-                       source_path = ?, content_hash = ?, file_size = ?, mime_type = ?,
+                       source_path = ?, content_hash = ?, file_size = ?, mime_type = ?, kind = ?,
                        effective_from = cast(? as date), effective_to = cast(? as date),
-                       kernel_doc_name = ?, index_status = 'PENDING', anythingllm_doc_id = null,
                        last_error = null, chunk_status = 'PENDING', chunk_count = 0, chunk_error = null,
-                       updated_at = now()
+                       asset_status = 'NONE', asset_count = 0, asset_error = null,
+                       uploaded_by = coalesce(?, uploaded_by), updated_at = now()
                  where id = ?
                 """,
                 domainCode, entry.title(), blankTo(entry.docStatus(), "现行"),
                 blankTo(entry.secrecy(), "内部公开"), entry.ownerDept(),
-                sourcePath, contentHash, fileSize, mimeType,
-                blankToNull(entry.effectiveFrom()), blankToNull(entry.effectiveTo()), kernelDocName, id);
+                sourcePath, contentHash, fileSize, mimeType, blankTo(kind, "text"),
+                blankToNull(entry.effectiveFrom()), blankToNull(entry.effectiveTo()),
+                uploadedBy, id);
     }
 
-    public void markIndexed(long id, String anythingllmDocId) {
+    /** 图片文档：不产 chunk——标 SKIPPED，避免看起来"缺索引"。 */
+    public void markImageSkipped(long id) {
         jdbc.update("""
-                update document set index_status = 'INDEXED', anythingllm_doc_id = ?, last_error = null,
+                update document set chunk_status = 'SKIPPED', last_error = null,
                        updated_at = now()
                  where id = ?
-                """, anythingllmDocId, id);
+                """, id);
     }
 
-    /** 自建片段就绪（P2）。与 index_status 分开：内核收下了不等于我们解析好了。 */
+    /** 图片资产就绪（与 chunk_status 平行）。 */
+    public void markAssetIndexed(long id, int assetCount) {
+        jdbc.update("""
+                update document set asset_status = 'INDEXED', asset_count = ?, asset_error = null,
+                       updated_at = now()
+                 where id = ?
+                """, assetCount, id);
+    }
+
+    public void markAssetFailed(long id, String error) {
+        jdbc.update("""
+                update document set asset_status = 'FAILED', asset_error = ?, updated_at = now()
+                 where id = ?
+                """, error, id);
+    }
+
+    /** 未启用视觉模型等情况：明确记为 SKIPPED（不是失败），便于区分"没做"与"做坏了"。 */
+    public void markAssetSkipped(long id, String reason) {
+        jdbc.update("""
+                update document set asset_status = 'SKIPPED', asset_error = ?, updated_at = now()
+                 where id = ?
+                """, reason, id);
+    }
+
+    /** 自建片段就绪。这也是"文档可被检索"的唯一状态。 */
     public void markChunkIndexed(long id, int chunkCount) {
         jdbc.update("""
                 update document set chunk_status = 'INDEXED', chunk_count = ?, chunk_error = null,
@@ -178,23 +225,18 @@ public class DocumentRepository {
     }
 
     /**
-     * 已入库内核的文档，重解析用。
+     * 已就绪（片段可检索）的文本文档，重解析用。
      *
      * <p>用占位符而不是把 {@code 'INDEXED'} 拼进 SQL：原文写成了 {@code '\''INDEXED'\''}，
      * 而 Java 的字符串里 {@code '} 本来就不用转义，于是编译出来是 {@code '''INDEXED'''}——
      * 这是一个合法的 SQL 字面量（值等于 {@code 'INDEXED'}，带着引号），查询不报错，
      * 只是永远返回 0 行。整个重灌入口就这么静默空转了。占位符把这类引号事故从根上关掉。</p>
      */
-    public List<Row> findIndexed() {
-        return jdbc.query("select " + COLUMNS + " from document where index_status = ? order by id",
+    public List<Row> findChunkIndexed() {
+        // 只重解析文本文档：图片文档没有 chunk，进这里只会白跑一遍
+        return jdbc.query("select " + COLUMNS + " from document where chunk_status = ? and kind = 'text' "
+                        + "order by id",
                 MAPPER, "INDEXED");
-    }
-
-    public void markFailed(long id, String error) {
-        jdbc.update("""
-                update document set index_status = 'FAILED', last_error = ?, updated_at = now()
-                 where id = ?
-                """, error, id);
     }
 
     /**

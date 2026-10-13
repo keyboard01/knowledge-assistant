@@ -13,7 +13,7 @@ import io.github.keyboard01.assistant.security.AccessFilter;
 import io.github.keyboard01.assistant.security.AclRule;
 
 /**
- * 把内核命中变成"可引用、已过权限"的证据。
+ * 把检索命中变成可引用、已过权限的证据。
  *
  * <p>纯函数：只吃内存里的命中与登记表投影，不碰数据库、不碰 Spring。权限过滤与聚合的正确性
  * 靠单测钉住——这段逻辑一旦漏过滤，泄漏是静默的，靠人眼看日志发现不了。</p>
@@ -47,7 +47,7 @@ public final class EvidenceAssembler {
     }
 
     public static RetrievalResult assemble(List<RetrievedPassage> hits,
-                                           Map<String, DocumentRef> documentsByKernelName,
+                                           Map<Long, DocumentRef> documentsById,
                                            Map<Long, List<AclRule>> aclByDocumentId,
                                            AccessFilter filter,
                                            Context context) {
@@ -61,7 +61,7 @@ public final class EvidenceAssembler {
         Map<Long, List<RetrievedPassage>> fragmentsByDocument = new LinkedHashMap<>();
 
         for (RetrievedPassage hit : safeHits) {
-            DocumentRef document = documentsByKernelName.get(hit.kernelDocName());
+            DocumentRef document = documentsById.get(hit.documentId());
             if (document == null) {
                 droppedUnknown++;
                 continue;
@@ -97,11 +97,10 @@ public final class EvidenceAssembler {
             Evidence evidence = ranked.get(index).evidence();
             evidences.add(new Evidence(index + 1, evidence.documentId(), evidence.docNo(), evidence.title(),
                     evidence.version(), evidence.docStatus(), evidence.secrecy(), evidence.ownerDept(),
-                    evidence.kernelDocName(), evidence.bestScore(), evidence.fragments()));
+                    evidence.bestScore(), evidence.fragments()));
         }
 
-        // 自建通道在 SQL 里就挡掉了，所以 Java 侧数到 0；内核通道反过来。两边相加才是"被挡下的总数"，
-        // 相加不会重复计数：任一时刻只装配一个检索实现（见 assistant.retrieval.mode）。
+        // 自建通道在 SQL 里就挡掉了，所以 Java 侧数到 0。这个计数器留给"两路都要数"的场景。
         droppedUnauthorized += context.blockedHitCount();
         int kernelHits = safeHits.size();
         int vectorHits = (int) safeHits.stream().filter(hit -> hit.vectorRank() > 0).count();
@@ -172,7 +171,7 @@ public final class EvidenceAssembler {
                         passage.vectorRank(), passage.keywordRank()))
                 .toList();
         return new Evidence(0, document.id(), document.docNo(), document.title(), document.version(),
-                document.docStatus(), document.secrecy(), document.ownerDept(), document.kernelDocName(),
+                document.docStatus(), document.secrecy(), document.ownerDept(),
                 fragments.get(0).score(), fragments);
     }
 
@@ -201,7 +200,7 @@ public final class EvidenceAssembler {
                         + "，关键词最高分 " + score(bestKeywordScore) + " 低于 " + score(keywordMinScore)
                         + "），建议补充更具体的关键词或换个知识域");
             } else if (droppedUnknown > 0) {
-                notes.add("命中的片段无法反查回本地登记，内核里可能混入了未登记的文件");
+                notes.add("命中的片段反查不到本地文档，可能已被删除");
             } else if (droppedNotIndexed > 0) {
                 notes.add("命中的文档当前不在可检索状态（索引失败或尚未同步）");
             } else {

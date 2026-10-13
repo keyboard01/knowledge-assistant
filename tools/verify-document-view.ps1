@@ -93,7 +93,7 @@ $demoToken = (Call 'POST' '/auth/login' $null @{ username = 'demo'; password = (
 Check '登录取令牌（admin / demo）' ($adminToken -and $demoToken) "秘密文档 id=$secretDocId；DOCX id=$docxDocId；PDF id=$pdfDocId"
 
 # ---------- AC-D-010 前置快照：查看必须只读 ----------
-$snapBefore = [string](@(Sql "select content_hash || '|' || index_status || '|' || chunk_count from document where id = $docxDocId")[0])
+$snapBefore = [string](@(Sql "select content_hash || '|' || chunk_status || '|' || chunk_count from document where id = $docxDocId")[0])
 $chunksBefore = [int](@(Sql "select count(*) from document_chunk where document_id = $docxDocId")[0])
 
 # ---------- AC-D-001 无权限：三入口都 403 ----------
@@ -180,7 +180,7 @@ Check 'Markdown 视图为库内每个片段都提供了锚点（可被引用点�
 Write-Host "`n---------- AC-D-006 响应不泄漏内部信息 ----------"
 $bodies = @($md.Json.markdown, $pdfMd.Json.markdown, $pdfMd.Raw, (Get-Content -LiteralPath (Join-Path $outDir 'denied-file.bin') -Raw))
 $pdfText = (PdfProbe $previewPdf '')['SAMPLE']
-$leakPatterns = @('source_path', 'sourcePath', 'contentHash', 'content_hash', 'anythingllm', 'anythingLlm', 'D:\\', 'knowledge\\')
+$leakPatterns = @('source_path', 'sourcePath', 'contentHash', 'content_hash', 'D:\\', 'knowledge\\')
 $found = @()
 foreach ($body in $bodies) {
     foreach ($pattern in $leakPatterns) { if ($body -match [regex]::Escape($pattern)) { $found += $pattern } }
@@ -228,9 +228,9 @@ try {
 
 # ---------- AC-D-010 查看是只读动作 ----------
 Write-Host "`n---------- AC-D-010 查看不动库里的值 ----------"
-$snapAfter = [string](@(Sql "select content_hash || '|' || index_status || '|' || chunk_count from document where id = $docxDocId")[0])
+$snapAfter = [string](@(Sql "select content_hash || '|' || chunk_status || '|' || chunk_count from document where id = $docxDocId")[0])
 $chunksAfter = [int](@(Sql "select count(*) from document_chunk where document_id = $docxDocId")[0])
-Check 'content_hash / index_status / chunk_count 不变' ($snapBefore -eq $snapAfter) "前=$snapBefore`n                                                     后=$snapAfter"
+Check 'content_hash / chunk_status / chunk_count 不变' ($snapBefore -eq $snapAfter) "前=$snapBefore`n                                                     后=$snapAfter"
 Check 'document_chunk 行数不变' ($chunksBefore -eq $chunksAfter) "前=$chunksBefore 后=$chunksAfter"
 
 ''

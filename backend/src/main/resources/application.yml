@@ -33,9 +33,6 @@ spring:
 
 assistant:
   retrieval:
-    # 检索通道：local = 自建（本地向量 + 关键词 + RRF 融合，默认，S3 的落点）；
-    # kernel = AnythingLLM 原生 vector-search（对照/回退用，分数被内核压扁过，不适合当阈值判据）
-    mode: local
     # 查询改写（P1）：on = 用生成模型产出 2~3 条变体，与原问题并行召回后多路融合。
     # 默认 off——改写要多一次模型调用，且属于"快速通道也要更好"那类，由运维按需开启；失败一律 fail-open。
     rewrite: off

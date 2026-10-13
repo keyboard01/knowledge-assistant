@@ -43,7 +43,7 @@ const EDGE_CANDIDATES = [
 ].filter(Boolean)
 
 /** 域对象允许出现的字段：多一个字段就可能是"总数"偷偷混进来，所以按白名单卡死。 */
-const DOMAIN_FIELDS = ['code', 'name', 'workspaceSlug', 'description', 'enabled', 'visibleDocuments']
+const DOMAIN_FIELDS = ['code', 'name', 'description', 'enabled', 'visibleDocuments']
 
 let pass = 0
 let fail = 0

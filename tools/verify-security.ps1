@@ -93,10 +93,10 @@ if (-not (Test-Path -LiteralPath $dist)) {
         $(if ($hits.Count -eq 0) { "已扫描 $($files.Count) 个文件，$($blob.Length) 字符，命中 0" } else { "命中：$($hits -join ', ')" })
 
     $domains = (Call 'GET' '/domains' $adminToken $null).Raw | ConvertFrom-Json
-    $slugs = @($domains.domains | ForEach-Object { $_.workspaceSlug })
-    $slugHits = @($slugs | Where-Object { $_ -and $blob.Contains($_) })
-    Check '构建产物里没有内核工作区 slug' ($slugHits.Count -eq 0) `
-        $(if ($slugHits.Count -eq 0) { "已核对 $($slugs.Count) 个 slug" } else { "命中：$($slugHits -join ', ')" })
+    $names = @($domains.domains | ForEach-Object { $_.name })
+    $nameHits = @($names | Where-Object { $_ -and $blob.Contains($_) })
+    Check '构建产物里没有知识域名称' ($nameHits.Count -eq 0) `
+        $(if ($nameHits.Count -eq 0) { "已核对 $($names.Count) 个知识域" } else { "命中：$($nameHits -join ', ')" })
 }
 
 # ---------- 2. 所有 GET 响应 ----------
@@ -161,7 +161,7 @@ Check 'GET /api/settings 的密钥字段 value 恒为空串' ($badValue.Count -e
 Check '密钥掩码不等于明文（也没把明文包含进去）' ($badMask.Count -eq 0) `
     $(if ($badMask.Count -eq 0) { '掩码形如 sk-****1234，与明文不可互推' } else { "异常字段：$($badMask -join ', ')" })
 Check '对照组：库里确实存着明文（否则"没泄露"只是因为"没配置"）' `
-    (@($secrets.Keys | Where-Object { $_ -like 'llm.*' -or $_ -like 'anythingllm.*' }).Count -gt 0) `
+    (@($secrets.Keys | Where-Object { $_ -like 'llm.*' -or $_ -like 'embedding.*' }).Count -gt 0) `
     "库里非空密钥字段：$(@($secrets.Keys | Where-Object { $_ -notlike 'env.*' }) -join ', ')"
 
 # ---------- 4. 保存配置的 PUT：允许带密钥，但不得写日志 ----------

@@ -20,7 +20,7 @@ final class DeepFixtures {
     static Evidence document(long documentId, String docNo, String title, double bestScore,
                              Evidence.Fragment... fragments) {
         return new Evidence(0, documentId, docNo, title, "V1.0", "现行", "内部公开", "生产部",
-                "kernel-" + documentId, bestScore, List.of(fragments));
+                bestScore, List.of(fragments));
     }
 
     static List<Evidence> list(Evidence... evidences) {

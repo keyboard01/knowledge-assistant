@@ -134,5 +134,32 @@
     "version" : "V1.0",
     "docStatus" : "现行",
     "secrecy" : "内部公开"
+  }, {
+    "file" : "tech/QM-JS-DJ-2026-001_V1.0.pptx",
+    "domainCode" : "tech",
+    "docNo" : "QM-JS-DJ-2026-001",
+    "title" : "CNC-850 立式加工中心点检图示",
+    "version" : "V1.0",
+    "docStatus" : "现行",
+    "secrecy" : "内部公开",
+    "ownerDept" : "设备动力部"
+  }, {
+    "file" : "repair/QM-WX-KYJ-2026-002_V1.0.pptx",
+    "domainCode" : "repair",
+    "docNo" : "QM-WX-KYJ-2026-002",
+    "title" : "GA-75 空压机故障指示与安全标识图集",
+    "version" : "V1.0",
+    "docStatus" : "现行",
+    "secrecy" : "内部公开",
+    "ownerDept" : "设备动力部"
+  }, {
+    "file" : "tech/QM-JS-HYZ-2026-003_V1.0.pptx",
+    "domainCode" : "tech",
+    "docNo" : "QM-JS-HYZ-2026-003",
+    "title" : "液压站 HYZ-40 油位、管路与渗漏点图示",
+    "version" : "V1.0",
+    "docStatus" : "现行",
+    "secrecy" : "内部公开",
+    "ownerDept" : "设备动力部"
   } ]
 }

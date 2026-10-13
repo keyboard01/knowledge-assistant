@@ -24,7 +24,7 @@ public final class HttpSupport {
 
     public static final ObjectMapper MAPPER = new ObjectMapper();
     private static final HttpClient HTTP = HttpClient.newBuilder()
-            // AnythingLLM（Node）不接受 Java 客户端默认的 h2c 升级请求，会返回 400
+            // 部分服务（Node 系）不接受 Java 客户端默认的 h2c 升级请求，会返回 400
             .version(HttpClient.Version.HTTP_1_1)
             .connectTimeout(Duration.ofSeconds(6))
             .build();

@@ -9,7 +9,6 @@ import java.security.NoSuchAlgorithmException;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -19,12 +18,16 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
-import io.github.keyboard01.assistant.adapters.anythingllm.KernelGateway;
 import io.github.keyboard01.assistant.domain.DomainRepository;
+import io.github.keyboard01.assistant.domain.DomainService;
 import io.github.keyboard01.assistant.domain.KnowledgeDomain;
+import io.github.keyboard01.assistant.media.DocKind;
+import io.github.keyboard01.assistant.media.MediaIndexer;
 import io.github.keyboard01.assistant.parse.ChunkSplitter;
 import io.github.keyboard01.assistant.parse.DocumentParseService;
 import io.github.keyboard01.assistant.parse.ParsedBlock;
+import io.github.keyboard01.assistant.security.AccessSubject;
+import io.github.keyboard01.assistant.security.DocumentVisibility;
 import io.github.keyboard01.assistant.settings.SettingService;
 
 /**
@@ -45,30 +48,32 @@ public class IngestService {
     }
 
     public record ScanSummary(String sourceRoot, String startedAt, int scanned, int uploaded, int skipped,
-                              int failed, Integer vectorCountBefore, Integer vectorCountAfter,
-                              List<FileResult> files) {
+                              int failed, List<FileResult> files) {
     }
 
     private final DocumentRepository documents;
     private final IngestTaskRepository tasks;
     private final DomainRepository domains;
     private final SettingService settingService;
-    private final KernelGateway kernel;
     private final ChunkIndexer chunkIndexer;
     private final DocumentParseService parser;
     private final ChunkingSettings chunking;
+    private final DomainService domainService;
+    private final MediaIndexer mediaIndexer;
 
     public IngestService(DocumentRepository documents, IngestTaskRepository tasks, DomainRepository domains,
-                         SettingService settingService, KernelGateway kernel, ChunkIndexer chunkIndexer,
-                         DocumentParseService parser, ChunkingSettings chunking) {
+                         SettingService settingService, ChunkIndexer chunkIndexer,
+                         DocumentParseService parser, ChunkingSettings chunking, DomainService domainService,
+                         MediaIndexer mediaIndexer) {
         this.documents = documents;
         this.tasks = tasks;
         this.domains = domains;
         this.settingService = settingService;
-        this.kernel = kernel;
         this.chunkIndexer = chunkIndexer;
         this.parser = parser;
         this.chunking = chunking;
+        this.domainService = domainService;
+        this.mediaIndexer = mediaIndexer;
     }
 
     public Path sourceRoot() {
@@ -95,7 +100,6 @@ public class IngestService {
         }
         Map<String, KnowledgeDomain> domainsByCode = domainsByCode();
 
-        Integer vectorBefore = vectorCount();
         List<FileResult> results = new ArrayList<>();
         int uploaded = 0;
         int skipped = 0;
@@ -112,7 +116,7 @@ public class IngestService {
                     || entry.version() == null || entry.version().isBlank()) {
                 result = failTask(relative, entry.domainCode(), "登记表缺少 docNo 或 version，无法入库");
             } else {
-                result = ingest(root, file, relative, entry, domainsByCode);
+                result = ingest(root, file, relative, entry, domainsByCode, null);
             }
             results.add(result);
             switch (result.status()) {
@@ -122,11 +126,10 @@ public class IngestService {
             }
         }
 
-        Integer vectorAfter = vectorCount();
-        log.info("[同步] 完成：扫描 {}，入库 {}，跳过 {}，失败 {}；内核向量 {} → {}",
-                results.size(), uploaded, skipped, failed, vectorBefore, vectorAfter);
+        log.info("[同步] 完成：扫描 {}，入库 {}，跳过 {}，失败 {}",
+                results.size(), uploaded, skipped, failed);
         return new ScanSummary(root.toString(), OffsetDateTime.now().toString(), results.size(),
-                uploaded, skipped, failed, vectorBefore, vectorAfter, results);
+                uploaded, skipped, failed, results);
     }
 
     /** 按任务重试：重新读登记表，重新算哈希，走同一条路径。 */
@@ -151,7 +154,7 @@ public class IngestService {
         if (entry == null) {
             return failTask(task.sourcePath(), null, "该文件未在 manifest.json 登记，无法重试");
         }
-        return ingest(root, file, task.sourcePath(), entry, domainsByCode());
+        return ingest(root, file, task.sourcePath(), entry, domainsByCode(), null);
     }
 
     public List<FileResult> retryFailed() {
@@ -180,8 +183,10 @@ public class IngestService {
      * <p>与"目录 + manifest 手工登记"是同一条链的两种入口：上传只是把"放文件 + 写登记"这两步搬到了服务端。
      * 目标路径固定为 {@code {domainCode}/{docNo}_{version}{ext}}（ASCII 清洗），所以同一版本重复上传是覆盖同一路径。</p>
      */
-    public FileResult upload(UploadRequest request) {
+    public FileResult upload(UploadRequest request, AccessSubject subject, boolean admin) {
         String domainCode = require(request.domainCode(), "请选择知识域");
+        // 域级门：能看见这个域才有资格投稿（v1 = 可见即可上传，配合下面的审核闸门）。
+        domainService.requireAccessible(subject, domainCode);
         KnowledgeDomain domain = domainsByCode().get(domainCode);
         if (domain == null) {
             throw new IllegalArgumentException("知识域不存在：" + domainCode);
@@ -193,13 +198,21 @@ public class IngestService {
         String title = require(request.title(), "文档标题不能为空");
         String version = require(request.version(), "版本号不能为空");
         String extension = extension(request.originalFilename());
-        if (!".pdf".equals(extension) && !".docx".equals(extension)) {
-            throw new IllegalArgumentException("只支持上传 PDF / DOCX（当前：" + extension + "）");
+        boolean image = DocKind.ofName(request.originalFilename()) == DocKind.IMAGE;
+        if (!image && !".pdf".equals(extension) && !".docx".equals(extension) && !".pptx".equals(extension)) {
+            throw new IllegalArgumentException(
+                    "只支持 PDF / DOCX / PPTX / 图片（png/jpg/jpeg/gif/bmp）（当前：" + extension + "）");
         }
         if (request.content() == null || request.content().length == 0) {
             throw new IllegalArgumentException("上传的文件为空");
         }
-        ensureWorkspace(domain);
+
+        // 状态与密级由身份决定：管理员可自定；普通用户一律"草案·未生效 + 内部公开"，等审核，
+        // 且不能自己指定——否则用户能把未审内容直接标成现行、或标成秘密级。
+        String docStatus = admin ? blankTo(request.docStatus(), DocumentVisibility.CURRENT)
+                : "草案·未生效";
+        String secrecy = admin ? blankTo(request.secrecy(), "内部公开") : "内部公开";
+        guardOverwrite(docNo, version, subject.username(), admin);
 
         Path root = sourceRoot();
         String relative = IngestManifest.normalize(
@@ -216,8 +229,7 @@ public class IngestService {
         }
 
         IngestManifest.Entry entry = new IngestManifest.Entry(relative, domainCode, docNo, title, version,
-                blankTo(request.docStatus(), "现行"), blankTo(request.secrecy(), "内部公开"),
-                request.ownerDept(), request.effectiveFrom(), request.effectiveTo());
+                docStatus, secrecy, request.ownerDept(), request.effectiveFrom(), request.effectiveTo());
         String replaced;
         try {
             replaced = ManifestWriter.upsert(root, entry);
@@ -231,11 +243,37 @@ public class IngestService {
                 log.warn("替换版本后清理旧文件失败（不影响入库）：{} —— {}", replaced, ex.getMessage());
             }
         }
-        return ingestOne(relative);
+        return ingestOne(relative, subject.username());
+    }
+
+    /**
+     * 覆盖守卫：非管理员只能覆盖"自己上传且尚未生效"的文档。
+     * 否则同 (文档编号, 版本) 重传会把别人的**现行**文档降级成草案，或覆盖机密文档——
+     * 这两件事都不该由一个普通用户的一次上传做到。
+     */
+    private void guardOverwrite(String docNo, String version, String username, boolean admin) {
+        if (admin) {
+            return;
+        }
+        DocumentRepository.Row existing = documents.findByDocNoAndVersion(docNo, version).orElse(null);
+        if (existing == null) {
+            return;
+        }
+        if (DocumentVisibility.isCurrent(existing.docStatus())) {
+            throw new IllegalStateException("「" + docNo + " " + version + "」已有现行版本，不能覆盖，请联系管理员");
+        }
+        String owner = existing.uploadedBy();
+        if (owner != null && !owner.isBlank() && !owner.equals(username)) {
+            throw new IllegalStateException("「" + docNo + " " + version + "」由他人上传，不能覆盖");
+        }
+        String secrecy = existing.secrecy() == null ? "" : existing.secrecy();
+        if (secrecy.contains("秘密") || secrecy.contains("机密")) {
+            throw new IllegalStateException("「" + docNo + " " + version + "」为机密文档，不能覆盖");
+        }
     }
 
     /** 入库单个已登记文件（供上传与按需单文件重入使用）。 */
-    public FileResult ingestOne(String relative) {
+    public FileResult ingestOne(String relative, String uploadedBy) {
         Path root = sourceRoot();
         Path file = root.resolve(relative).normalize();
         if (!file.startsWith(root)) {
@@ -254,28 +292,7 @@ public class IngestService {
         if (entry == null) {
             throw new IllegalStateException("文件未在 manifest.json 登记：" + relative);
         }
-        return ingest(root, file, IngestManifest.normalize(relative), entry, domainsByCode());
-    }
-
-    /** 上传直接打到内核，工作区不存在会失败得莫名其妙——先明确报出来，指路"初始化"。 */
-    private void ensureWorkspace(KnowledgeDomain domain) {
-        Map<String, String> cfg = settingService.effective(SettingService.GROUP_ANYTHINGLLM);
-        if (!kernel.hasApiKey(cfg)) {
-            throw new IllegalStateException("未配置内核 API Key，无法上传");
-        }
-        try {
-            boolean exists = kernel.listWorkspaces(cfg).stream()
-                    .anyMatch(workspace -> workspace.slug().equals(domain.workspaceSlug()));
-            if (!exists) {
-                throw new IllegalStateException("知识域「" + domain.name() + "」的内核工作区还没初始化，"
-                        + "请先在「知识域与内核」里执行初始化");
-            }
-        } catch (InterruptedException ex) {
-            Thread.currentThread().interrupt();
-            throw new IllegalStateException("检查内核工作区被中断");
-        } catch (IOException ex) {
-            throw new IllegalStateException("连接内核失败：" + ex.getMessage(), ex);
-        }
+        return ingest(root, file, IngestManifest.normalize(relative), entry, domainsByCode(), uploadedBy);
     }
 
     private static String require(String value, String message) {
@@ -304,7 +321,7 @@ public class IngestService {
     }
 
     private FileResult ingest(Path root, Path file, String relative, IngestManifest.Entry entry,
-                              Map<String, KnowledgeDomain> domainsByCode) {
+                              Map<String, KnowledgeDomain> domainsByCode, String uploadedBy) {
         KnowledgeDomain domain = domainsByCode.get(entry.domainCode());
         if (domain == null) {
             return failTask(relative, entry.domainCode(), "登记的知识域不存在：" + entry.domainCode());
@@ -313,9 +330,9 @@ public class IngestService {
             return failTask(relative, domain.code(), "知识域已停用：" + domain.code());
         }
 
-        Map<String, String> cfg = settingService.effective(SettingService.GROUP_ANYTHINGLLM);
-        if (!kernel.hasApiKey(cfg)) {
-            return failTask(relative, domain.code(), "未配置内核 API Key，无法上传");
+        // 图片文档走另一条路：不产 chunk，只产出图片资产
+        if (DocKind.of(file) == DocKind.IMAGE) {
+            return ingestImage(file, relative, entry, domain, uploadedBy);
         }
 
         byte[] content;
@@ -328,14 +345,12 @@ public class IngestService {
         }
 
         String mimeType = mimeType(file);
-        String kernelName = kernelDocName(entry, file);
         long taskId = tasks.insert(relative, hash, tasks.latestAttempts(relative) + 1);
 
         DocumentRepository.Row existing = documents.findByDocNoAndVersion(entry.docNo(), entry.version()).orElse(null);
-        if (existing != null && hash.equals(existing.contentHash()) && "INDEXED".equals(existing.indexStatus())) {
+        if (existing != null && hash.equals(existing.contentHash()) && "INDEXED".equals(existing.chunkStatus())) {
             String metadataDetail = documents.syncMetadata(existing, entry, domain.code());
-            String detail = "内容未变化，内核已有同版本同内容（幂等跳过）"
-                    + (metadataDetail.isEmpty() ? "" : "；" + metadataDetail);
+            String detail = "内容未变化（幂等跳过）" + (metadataDetail.isEmpty() ? "" : "；" + metadataDetail);
             tasks.finish(taskId, existing.id(), "SKIPPED", "SKIPPED", detail, null);
             return new FileResult(relative, "SKIPPED", "SKIPPED", detail, domain.code(), existing.id());
         }
@@ -344,70 +359,28 @@ public class IngestService {
         String action;
         if (existing == null) {
             action = "CREATED";
-        } else if ("INDEXED".equals(existing.indexStatus())) {
+        } else if ("INDEXED".equals(existing.chunkStatus())) {
             action = "REUPLOADED";
         } else {
             action = "RETRIED";
         }
         long documentId;
         if (existing == null) {
-            documentId = documents.insert(entry, domain.code(), relative, hash, content.length, mimeType, kernelName);
+            documentId = documents.insert(entry, domain.code(), relative, hash, content.length, mimeType,
+                    uploadedBy, "text");
         } else {
             documentId = existing.id();
-            try {
-                // 同一 (文档编号, 版本) 的内容变了，先把内核里的旧副本删掉：
-                // 先删后传，任何时刻都不会同时存在两份内容。
-                if (existing.anythingllmDocId() != null && !existing.anythingllmDocId().isBlank()) {
-                    kernel.removeDocuments(cfg, List.of(existing.anythingllmDocId()));
-                }
-            } catch (InterruptedException ex) {
-                Thread.currentThread().interrupt();
-                return finishFailure(taskId, documentId, relative, domain.code(), action, "清理旧版本被中断");
-            } catch (Exception ex) {
-                return finishFailure(taskId, documentId, relative, domain.code(), action,
-                        "清理内核旧版本失败：" + describeFailure(ex));
-            }
-            documents.updateSource(documentId, entry, domain.code(), relative, hash, content.length, mimeType, kernelName);
+            documents.updateSource(documentId, entry, domain.code(), relative, hash, content.length, mimeType,
+                    uploadedBy, "text");
         }
 
-        try {
-            Integer beforeUpload = vectorCount();
-            var uploaded = kernel.uploadDocument(cfg, domain.workspaceSlug(), kernelName, mimeType, content,
-                    metadata(entry, domain));
-            Integer afterUpload = vectorCount();
-            if (beforeUpload != null && afterUpload != null && afterUpload <= beforeUpload) {
-                throw new IllegalStateException("内核收下了文件却没有产生向量（" + beforeUpload + " → " + afterUpload
-                        + "），请检查内核向量化配置与批量上限");
-            }
-            documents.markIndexed(documentId, uploaded.location());
-            documents.replaceAcl(documentId, entry.secrecy());
-            String delta = beforeUpload == null || afterUpload == null ? ""
-                    : "，新增向量 " + (afterUpload - beforeUpload);
-            // 内核收下 ≠ 自建片段就绪：这一步失败不影响"文档已入库"，但会如实标出来
-            String detail = "已入库 " + kernelName + delta + indexChunks(documentId, entry.title(), file);
-            tasks.finish(taskId, documentId, "SUCCEEDED", action, detail, null);
-            log.info("[同步] {} {} → {}", action, relative, detail);
-            return new FileResult(relative, action, "SUCCEEDED", detail, domain.code(), documentId);
-        } catch (InterruptedException ex) {
-            Thread.currentThread().interrupt();
-            documents.markFailed(documentId, "上传被中断");
-            tasks.finish(taskId, documentId, "FAILED", action, "上传被中断", "上传被中断");
-            return new FileResult(relative, action, "FAILED", "上传被中断", domain.code(), documentId);
-        } catch (Exception ex) {
-            String message = "上传到内核失败：" + describeFailure(ex);
-            documents.markFailed(documentId, message);
-            tasks.finish(taskId, documentId, "FAILED", action, "上传失败", message);
-            log.error("[同步] {} {} 失败：{}", action, relative, message);
-            return new FileResult(relative, action, "FAILED", message, domain.code(), documentId);
-        }
-    }
-
-    private FileResult finishFailure(long taskId, long documentId, String relative, String domainCode,
-                                     String action, String message) {
-        documents.markFailed(documentId, message);
-        tasks.finish(taskId, documentId, "FAILED", action, "上传前清理失败", message);
-        log.error("[同步] {} {} 失败：{}", action, relative, message);
-        return new FileResult(relative, action, "FAILED", message, domainCode, documentId);
+        documents.replaceAcl(documentId, entry.secrecy());
+        // 检索只认自建片段：片段就绪 = 可检索。片段失败不影响文档行本身，但会如实标出来。
+        String detail = "已入库 " + relative + indexChunks(documentId, entry.title(), file)
+                + indexAssets(documentId, file, DocKind.TEXT, false);
+        tasks.finish(taskId, documentId, "SUCCEEDED", action, detail, null);
+        log.info("[同步] {} {} → {}", action, relative, detail);
+        return new FileResult(relative, action, "SUCCEEDED", detail, domain.code(), documentId);
     }
 
     private FileResult skipUnregistered(String relative) {
@@ -429,42 +402,6 @@ public class IngestService {
         Map<String, KnowledgeDomain> index = new HashMap<>();
         domains.findAll().forEach(domain -> index.put(domain.code(), domain));
         return index;
-    }
-
-    private Integer vectorCount() {
-        try {
-            return kernel.vectorCount(settingService.effective(SettingService.GROUP_ANYTHINGLLM));
-        } catch (InterruptedException ex) {
-            Thread.currentThread().interrupt();
-            return null;
-        } catch (Exception ex) {
-            log.debug("读取内核向量数失败：{}", ex.getMessage());
-            return null;
-        }
-    }
-
-    private static Map<String, String> metadata(IngestManifest.Entry entry, KnowledgeDomain domain) {
-        Map<String, String> metadata = new LinkedHashMap<>();
-        if (entry.ownerDept() != null && !entry.ownerDept().isBlank()) {
-            metadata.put("docAuthor", entry.ownerDept().trim());
-        }
-        metadata.put("description", entry.title() + " " + entry.version() + " " + blank(entry.docStatus())
-                + " 密级：" + blank(entry.secrecy()));
-        metadata.put("docSource", "企业知识助手同步：" + domain.name() + "（" + domain.code() + "）");
-        return metadata;
-    }
-
-    /**
-     * 内核里的文档名。检索命中只带得回文档名，带回不了我们的主键，
-     * 所以这个名字必须既能反查、又只含 ASCII（中文名在 multer 里会变乱码）。
-     */
-    private static String kernelDocName(IngestManifest.Entry entry, Path file) {
-        return ascii(entry.docNo()) + "_" + ascii(entry.version()) + extension(file);
-    }
-
-    private static String ascii(String value) {
-        String cleaned = value == null ? "" : value.replaceAll("[^A-Za-z0-9._-]", "");
-        return cleaned.isEmpty() ? "unknown" : cleaned;
     }
 
     private static String extension(Path file) {
@@ -544,6 +481,118 @@ public class IngestService {
         }
     }
 
+    /** 图片文档：只登记与抽图，不进内核、不产 chunk。 */
+    private FileResult ingestImage(Path file, String relative, IngestManifest.Entry entry, KnowledgeDomain domain,
+                                   String uploadedBy) {
+        byte[] content;
+        String hash;
+        try {
+            content = Files.readAllBytes(file);
+            hash = sha256(content);
+        } catch (IOException ex) {
+            return failTask(relative, domain.code(), "读取源文件失败：" + ex.getMessage());
+        }
+        String mimeType = mimeType(file);
+        long taskId = tasks.insert(relative, hash, tasks.latestAttempts(relative) + 1);
+
+        DocumentRepository.Row existing = documents.findByDocNoAndVersion(entry.docNo(), entry.version()).orElse(null);
+        if (existing != null && hash.equals(existing.contentHash()) && "image".equalsIgnoreCase(existing.kind())
+                && "INDEXED".equals(existing.assetStatus())) {
+            String metadataDetail = documents.syncMetadata(existing, entry, domain.code());
+            String detail = "内容未变化（图片），已跳过" + (metadataDetail.isEmpty() ? "" : "；" + metadataDetail);
+            tasks.finish(taskId, existing.id(), "SKIPPED", "SKIPPED", detail, null);
+            return new FileResult(relative, "SKIPPED", "SKIPPED", detail, domain.code(), existing.id());
+        }
+
+        String action = existing == null ? "CREATED"
+                : ("image".equalsIgnoreCase(existing.kind()) ? "REUPLOADED" : "RETRIED");
+        long documentId;
+        if (existing == null) {
+            documentId = documents.insert(entry, domain.code(), relative, hash, content.length, mimeType,
+                    uploadedBy, "image");
+        } else {
+            documentId = existing.id();
+            documents.updateSource(documentId, entry, domain.code(), relative, hash, content.length, mimeType,
+                    uploadedBy, "image");
+        }
+        // 图片文档不产 chunk：标 SKIPPED，避免看起来"缺索引"
+        documents.markImageSkipped(documentId);
+        documents.replaceAcl(documentId, entry.secrecy());
+        String detail = "图片文档已登记" + indexAssets(documentId, file, DocKind.IMAGE, false);
+        tasks.finish(taskId, documentId, "SUCCEEDED", action, detail, null);
+        log.info("[同步] {} {} → {}", action, relative, detail);
+        return new FileResult(relative, action, "SUCCEEDED", detail, domain.code(), documentId);
+    }
+
+    /** 图片资产索引：失败只标 `asset_status`，不影响文档入库（与 {@link #indexChunks} 同构）。 */
+    private String indexAssets(long documentId, Path file, DocKind kind, boolean force) {
+        try {
+            MediaIndexer.IndexResult result = mediaIndexer.index(documentId, file, kind, force,
+                    settingService.effective(SettingService.GROUP_VISION),
+                    settingService.effective(SettingService.GROUP_IMAGE_EMBEDDING));
+            if (result.skipped()) {
+                documents.markAssetSkipped(documentId, result.detail());
+                return "；图片未索引：" + result.detail();
+            }
+            documents.markAssetIndexed(documentId, result.assetCount());
+            return "；" + result.detail();
+        } catch (InterruptedException ex) {
+            Thread.currentThread().interrupt();
+            documents.markAssetFailed(documentId, "图片索引被中断");
+            return "；图片索引未就绪：被中断";
+        } catch (Exception ex) {
+            String message = describeFailure(ex);
+            documents.markAssetFailed(documentId, message);
+            log.warn("[图片] 文档 {} 抽取/描述失败：{}", documentId, message);
+            return "；图片索引未就绪：" + message;
+        }
+    }
+
+    public record AssetReindexSummary(int total, int indexed, int skipped, int failed) {
+    }
+
+    /** 重建图片索引：文本文档抽内嵌图、图片文档抽自身；不动文本 chunk。 */
+    public AssetReindexSummary reindexImages(boolean force) {
+        Path root = sourceRoot();
+        int total = 0;
+        int indexed = 0;
+        int skipped = 0;
+        int failed = 0;
+        for (DocumentRepository.Row row : documents.findAll()) {
+            boolean imageDoc = "image".equalsIgnoreCase(row.kind());
+            if (!imageDoc && !"INDEXED".equals(row.chunkStatus())) {
+                continue; // 文本文档只处理片段已就绪的
+            }
+            total++;
+            Path file = root.resolve(row.sourcePath()).normalize();
+            try {
+                if (!Files.isRegularFile(file)) {
+                    throw new IllegalStateException("源文件不存在：" + root.relativize(file));
+                }
+                MediaIndexer.IndexResult result = mediaIndexer.index(row.id(), file,
+                        imageDoc ? DocKind.IMAGE : DocKind.TEXT, force,
+                        settingService.effective(SettingService.GROUP_VISION),
+                        settingService.effective(SettingService.GROUP_IMAGE_EMBEDDING));
+                if (result.skipped()) {
+                    documents.markAssetSkipped(row.id(), result.detail());
+                    skipped++;
+                } else {
+                    documents.markAssetIndexed(row.id(), result.assetCount());
+                    indexed++;
+                }
+            } catch (InterruptedException ex) {
+                Thread.currentThread().interrupt();
+                documents.markAssetFailed(row.id(), "重建被中断");
+                failed++;
+            } catch (Exception ex) {
+                documents.markAssetFailed(row.id(), describeFailure(ex));
+                failed++;
+            }
+        }
+        log.info("[图片] 重建完成：共 {}，重建 {}，跳过 {}，失败 {}", total, indexed, skipped, failed);
+        return new AssetReindexSummary(total, indexed, skipped, failed);
+    }
+
     public record ReindexSummary(int total, int indexed, int skipped, int failed,
                                  List<ChunkIndexer.IndexResult> results) {
     }
@@ -569,6 +618,9 @@ public class IngestService {
     public ParsePreview preview(long documentId) {
         DocumentRepository.Row row = documents.findById(documentId)
                 .orElseThrow(() -> new IllegalArgumentException("文档不存在：" + documentId));
+        if ("image".equalsIgnoreCase(row.kind())) {
+            throw new IllegalArgumentException("图片文档没有可解析的文本块");
+        }
         Path root = sourceRoot();
         Path file = root.resolve(row.sourcePath()).normalize();
         if (!file.startsWith(root)) {
@@ -594,14 +646,14 @@ public class IngestService {
                 ChunkSplitter.split(all, chunking.options()).size(), all.size() > PREVIEW_BLOCK_LIMIT, blocks);
     }
 
-    /** 重建全部已入库文档的片段（解析器或分块规则改了以后用；内容没变的会被跳过）。 */
+    /** 重建全部片段已就绪的文本文档（解析器或分块规则改了以后用；内容没变的会被跳过）。 */
     public ReindexSummary reindex(boolean force) {
         Path root = sourceRoot();
         List<ChunkIndexer.IndexResult> results = new ArrayList<>();
         int indexed = 0;
         int skipped = 0;
         int failed = 0;
-        for (DocumentRepository.Row row : documents.findIndexed()) {
+        for (DocumentRepository.Row row : documents.findChunkIndexed()) {
             Path file = root.resolve(row.sourcePath()).normalize();
             try {
                 if (!Files.isRegularFile(file)) {
@@ -637,22 +689,18 @@ public class IngestService {
             current = current.getCause();
         }
         if (current instanceof java.net.ConnectException) {
-            return "内核拒绝连接（服务未启动或地址端口不对）";
+            return "连接被拒绝（服务未启动或地址端口不对）";
         }
         if (current instanceof java.nio.channels.ClosedChannelException) {
-            return "与内核的连接被关闭（内核正在重启或已停止）";
+            return "连接被关闭（对端正在重启或已停止）";
         }
         if (current instanceof java.net.http.HttpTimeoutException) {
-            return "等待内核响应超时（文档过大或内核正在忙）";
+            return "等待响应超时（内容过大或对端正在忙）";
         }
         String message = current.getMessage();
         if (message == null || message.isBlank()) {
             return current.getClass().getSimpleName();
         }
         return message;
-    }
-
-    private static String blank(String value) {
-        return value == null ? "" : value.trim();
     }
 }

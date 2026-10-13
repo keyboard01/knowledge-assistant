@@ -13,9 +13,6 @@ import java.util.TreeSet;
  *   <li>本地文档表：{@link #sql()} 是可下推的 exists 子查询，值全部走占位符绑定；</li>
  *   <li>检索命中：反查 document 行后按 {@link #allows(List)} 判定。</li>
  * </ul>
- *
- * <p>注意：AnythingLLM 的 vector-search 只接受 query/topN/scoreThreshold，没有元数据过滤能力，
- * 所以 P1 的"下推"落在这两处；P2 换自建检索后，这段条件可以直接下推到向量库。</p>
  */
 public record AccessFilter(AccessSubject subject, String sql, List<Object> params) {
 
@@ -49,17 +46,9 @@ public record AccessFilter(AccessSubject subject, String sql, List<Object> param
         return new AccessFilter(subject, sql.toString(), params);
     }
 
-    /** 内存判定：给检索命中反查出来的 document 行用。 */
+    /** 内存判定：给检索命中反查出来的 document 行用。与域授权共用 {@link AclRule#grantsAny}。 */
     public boolean allows(List<AclRule> rules) {
-        if (rules == null || rules.isEmpty()) {
-            return false;
-        }
-        for (AclRule rule : rules) {
-            if (rule != null && rule.grants(subject)) {
-                return true;
-            }
-        }
-        return false;
+        return AclRule.grantsAny(subject, rules);
     }
 
     public Object[] paramsArray() {

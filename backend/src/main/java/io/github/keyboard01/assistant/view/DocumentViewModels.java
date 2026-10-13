@@ -16,7 +16,8 @@ public final class DocumentViewModels {
     public enum Channel {
         FILE("原文预览"),
         CONTENT("Markdown 视图"),
-        DOWNLOAD("下载");
+        DOWNLOAD("下载"),
+        IMAGE("图片查看");
 
         private final String label;
 

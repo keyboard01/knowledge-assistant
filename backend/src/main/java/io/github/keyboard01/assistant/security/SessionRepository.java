@@ -46,4 +46,9 @@ public class SessionRepository {
     public int deleteByUserExcept(long userId, String keepTokenHash) {
         return jdbc.update("delete from app_session where user_id = ? and token_hash <> ?", userId, keepTokenHash);
     }
+
+    /** 停用账号或管理员重置密码后作废该账号全部会话（即时下线，不等令牌过期）。 */
+    public int deleteByUser(long userId) {
+        return jdbc.update("delete from app_session where user_id = ?", userId);
+    }
 }

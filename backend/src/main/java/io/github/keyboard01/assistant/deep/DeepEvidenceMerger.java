@@ -92,7 +92,7 @@ public final class DeepEvidenceMerger {
                 continue;
             }
             evidences.add(new Evidence(rank++, doc.documentId, doc.docNo, doc.title, doc.version, doc.docStatus,
-                    doc.secrecy, doc.ownerDept, doc.kernelDocName,
+                    doc.secrecy, doc.ownerDept,
                     Math.max(doc.sourceBestScore, fragments.get(0).score()), fragments));
         }
 
@@ -106,7 +106,7 @@ public final class DeepEvidenceMerger {
                 if (!mine.isEmpty()) {
                     slice.add(new Evidence(evidence.rank(), evidence.documentId(), evidence.docNo(), evidence.title(),
                             evidence.version(), evidence.docStatus(), evidence.secrecy(), evidence.ownerDept(),
-                            evidence.kernelDocName(), mine.get(0).score(), mine));
+                            mine.get(0).score(), mine));
                 }
             }
             slices.put(entry.getKey(), slice);
@@ -128,7 +128,6 @@ public final class DeepEvidenceMerger {
         private final String docStatus;
         private final String secrecy;
         private final String ownerDept;
-        private final String kernelDocName;
         private final double sourceBestScore;
         private final Map<String, Evidence.Fragment> fragments = new LinkedHashMap<>();
 
@@ -140,7 +139,6 @@ public final class DeepEvidenceMerger {
             this.docStatus = source.docStatus();
             this.secrecy = source.secrecy();
             this.ownerDept = source.ownerDept();
-            this.kernelDocName = source.kernelDocName();
             this.sourceBestScore = source.bestScore();
         }
 

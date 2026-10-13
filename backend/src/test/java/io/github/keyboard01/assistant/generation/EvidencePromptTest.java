@@ -48,7 +48,7 @@ class EvidencePromptTest {
     @DisplayName("同一份文档的多个命中片段全部进提示词（P1 章节展开的落点）")
     void includesAllFragmentsOfAnEvidence() {
         Evidence merged = new Evidence(1, 1L, "A-1", "A-1 的标题", "V1.0", "现行", "内部公开", "财务部",
-                "A-1_V1.0.pdf", 0.9, List.of(
+                0.9, List.of(
                         new Evidence.Fragment("c-1", "第一段", 0.9, 0.1, 10),
                         new Evidence.Fragment("c-2", "第二段", 0.7, 0.3, 10)));
 
@@ -71,7 +71,7 @@ class EvidencePromptTest {
 
     private static Evidence evidence(int rank, String docNo, String version, String fragmentText) {
         return new Evidence(rank, rank, docNo, docNo + " 的标题", version, "现行", "内部公开", "财务部",
-                docNo + "_" + version + ".pdf", 0.8,
+                0.8,
                 List.of(new Evidence.Fragment("chunk-" + rank, fragmentText, 0.8, 0.2, 12)));
     }
 }

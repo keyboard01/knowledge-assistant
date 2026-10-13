@@ -6,32 +6,21 @@ import java.util.List;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
-import org.springframework.context.annotation.Primary;
 import org.springframework.stereotype.Component;
 
 import io.github.keyboard01.assistant.adapters.embedding.TextEmbedder;
 import io.github.keyboard01.assistant.ingest.DocumentChunkRepository;
 
 /**
- * 自建混合召回（P2 的默认检索实现）：本地向量 + 本地关键词 → RRF 融合 →（可选）cross-encoder 重排。
+ * 自建混合召回（唯一的检索实现）：本地向量 + 本地关键词 → RRF 融合 →（可选）cross-encoder 重排。
  *
- * <p>为什么不让 AnythingLLM 继续当唯一召回源：它给的相似度是压扁过的
- * （拿片段自己的原文当查询，最高只有 0.572；该答的 0.44 与库外的 0.42 分不开），
- * 而"该不该作答"这条线必须在一个量纲上可比。自建之后，分数就是余弦相似度，尺度由我们定。</p>
- *
- * <p>内核通道（{@link io.github.keyboard01.assistant.adapters.anythingllm.AnythingLlmRetriever}）仍然保留：
- * 出问题时把 {@code assistant.retrieval.mode} 切成 {@code kernel} 就能对照——两个实现
- * 靠 {@code @ConditionalOnProperty} 互斥，同一时刻只会装配一个，不会有两个
- * {@link KnowledgeRetriever} 打架。</p>
+ * <p>分数就是**余弦相似度**，量纲由我们定——"该不该作答"这条线必须在同一量纲上可比。</p>
  *
  * <p>P0 重排（可选）：RRF 只看"两路各排第几"，不看"问题与片段到底像不像"。开启后把融合候选交给
  * {@link Reranker} 打相关性分，按分重排。**默认关闭**，且任何失败都 fail-open 退回 RRF 原序——
  * 重排是锦上添花，不能因为它出问题就检索不出结果。</p>
  */
 @Component
-@Primary
-@ConditionalOnProperty(name = "assistant.retrieval.mode", havingValue = "local", matchIfMissing = true)
 public class LocalChunkRetriever implements KnowledgeRetriever {
 
     private static final Logger log = LoggerFactory.getLogger(LocalChunkRetriever.class);
@@ -162,7 +151,7 @@ public class LocalChunkRetriever implements KnowledgeRetriever {
         return new RetrievedPassage(
                 String.valueOf(chunk.chunkId()),
                 chunk.chunkIndex(),
-                chunk.kernelDocName(),
+                chunk.documentId(),
                 chunk.content(),
                 item.vectorScore(),
                 1 - item.vectorScore(),

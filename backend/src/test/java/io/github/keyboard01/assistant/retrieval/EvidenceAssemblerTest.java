@@ -32,10 +32,10 @@ class EvidenceAssemblerTest {
     void mergesFragmentsOfSameDocument() {
         DocumentRef document = doc(3, "QM-ZD-2026-003", "V3.2", "INDEXED");
         List<RetrievedPassage> hits = List.of(
-                hit(document.kernelDocName(), "c-1", 0.58, "第一章"),
-                hit(document.kernelDocName(), "c-2", 0.66, "第二章"));
+                hit(document.id(), "c-1", 0.58, "第一章"),
+                hit(document.id(), "c-2", 0.66, "第二章"));
 
-        RetrievalResult result = EvidenceAssembler.assemble(hits, Map.of(document.kernelDocName(), document),
+        RetrievalResult result = EvidenceAssembler.assemble(hits, Map.of(document.id(), document),
                 Map.of(document.id(), PUBLIC), ADMIN, context(5));
 
         assertEquals(1, result.evidences().size());
@@ -54,11 +54,11 @@ class EvidenceAssemblerTest {
         DocumentRef publicDoc = doc(1, "QM-ZD-2026-011", "V1.4", "INDEXED");
         DocumentRef secretDoc = doc(2, "QM-ZD-2026-021", "V0.9", "INDEXED");
         List<RetrievedPassage> hits = List.of(
-                hit(secretDoc.kernelDocName(), "s-1", 0.91, "秘密内容"),
-                hit(publicDoc.kernelDocName(), "p-1", 0.42, "公开内容"));
+                hit(secretDoc.id(), "s-1", 0.91, "秘密内容"),
+                hit(publicDoc.id(), "p-1", 0.42, "公开内容"));
 
         RetrievalResult result = EvidenceAssembler.assemble(hits,
-                Map.of(publicDoc.kernelDocName(), publicDoc, secretDoc.kernelDocName(), secretDoc),
+                Map.of(publicDoc.id(), publicDoc, secretDoc.id(), secretDoc),
                 Map.of(publicDoc.id(), PUBLIC, secretDoc.id(), SECRET), DEMO, context(5));
 
         assertEquals(1, result.evidences().size());
@@ -67,31 +67,31 @@ class EvidenceAssemblerTest {
     }
 
     @Test
-    @DisplayName("既没权限又没索引的文档只计入无权限——不暴露它的索引状态")
-    void authorizationIsCheckedBeforeIndexStatus() {
+    @DisplayName("既没权限又没就绪的文档只计入无权限——不暴露它的就绪状态")
+    void authorizationIsCheckedBeforeReadiness() {
         DocumentRef secret = doc(9, "QM-ZD-2026-021", "V0.9", "FAILED");
 
         RetrievalResult result = EvidenceAssembler.assemble(
-                List.of(hit(secret.kernelDocName(), "s-1", 0.9, "秘密")),
-                Map.of(secret.kernelDocName(), secret), Map.of(secret.id(), SECRET), DEMO, context(5));
+                List.of(hit(secret.id(), "s-1", 0.9, "秘密")),
+                Map.of(secret.id(), secret), Map.of(secret.id(), SECRET), DEMO, context(5));
 
         assertEquals(1, result.diagnostics().droppedUnauthorized());
         assertEquals(0, result.diagnostics().droppedNotIndexed());
     }
 
     @Test
-    @DisplayName("未登记、未索引、重复片段各自计数，都不会变成证据")
+    @DisplayName("反查不到、未就绪、重复片段各自计数，都不会变成证据")
     void countsUnknownNotIndexedAndDuplicate() {
         DocumentRef indexed = doc(1, "A-1", "V1.0", "INDEXED");
         DocumentRef pending = doc(2, "A-2", "V1.0", "FAILED");
         List<RetrievedPassage> hits = List.of(
-                hit("不认识的文档_V1.0.pdf", "x-1", 0.90, "内核里有但本地没登记"),
-                hit(pending.kernelDocName(), "n-1", 0.80, "登记了但没索引成功"),
-                hit(indexed.kernelDocName(), "k-1", 0.70, "正常片段"),
-                hit(indexed.kernelDocName(), "k-1", 0.70, "同一个片段的重复命中"));
+                hit(99, "x-1", 0.90, "反查不到本地文档"),
+                hit(pending.id(), "n-1", 0.80, "登记了但片段没建好"),
+                hit(indexed.id(), "k-1", 0.70, "正常片段"),
+                hit(indexed.id(), "k-1", 0.70, "同一个片段的重复命中"));
 
         RetrievalResult result = EvidenceAssembler.assemble(hits,
-                Map.of(indexed.kernelDocName(), indexed, pending.kernelDocName(), pending),
+                Map.of(indexed.id(), indexed, pending.id(), pending),
                 Map.of(indexed.id(), PUBLIC, pending.id(), PUBLIC), ADMIN, context(5));
 
         RetrievalDiagnostics d = result.diagnostics();
@@ -108,13 +108,13 @@ class EvidenceAssemblerTest {
         DocumentRef best = doc(1, "A-1", "V1.0", "INDEXED");
         DocumentRef middle = doc(2, "A-2", "V1.0", "INDEXED");
         DocumentRef last = doc(3, "A-3", "V1.0", "INDEXED");
-        Map<String, DocumentRef> known = Map.of(best.kernelDocName(), best,
-                middle.kernelDocName(), middle, last.kernelDocName(), last);
+        Map<Long, DocumentRef> known = Map.of(best.id(), best,
+                middle.id(), middle, last.id(), last);
         Map<Long, List<AclRule>> acl = Map.of(best.id(), PUBLIC, middle.id(), PUBLIC, last.id(), PUBLIC);
         List<RetrievedPassage> hits = List.of(
-                hit(middle.kernelDocName(), "m-1", 0.70, "中"),
-                hit(last.kernelDocName(), "l-1", 0.50, "低"),
-                hit(best.kernelDocName(), "b-1", 0.90, "高"));
+                hit(middle.id(), "m-1", 0.70, "中"),
+                hit(last.id(), "l-1", 0.50, "低"),
+                hit(best.id(), "b-1", 0.90, "高"));
 
         RetrievalResult truncated = EvidenceAssembler.assemble(hits, known, acl, ADMIN, context(2));
         assertEquals(List.of(1, 2), truncated.evidences().stream().map(Evidence::rank).toList());
@@ -134,11 +134,11 @@ class EvidenceAssemblerTest {
         DocumentRef current = doc(3, "QM-ZD-2026-003", "V3.2", "INDEXED");
         DocumentRef obsolete = doc(2, "QM-ZD-2026-003", "V2.8", "INDEXED");
         List<RetrievedPassage> hits = List.of(
-                hit(obsolete.kernelDocName(), "v28-1", 0.61, "旧版"),
-                hit(current.kernelDocName(), "v32-1", 0.66, "现行"));
+                hit(obsolete.id(), "v28-1", 0.61, "旧版"),
+                hit(current.id(), "v32-1", 0.66, "现行"));
 
         RetrievalResult result = EvidenceAssembler.assemble(hits,
-                Map.of(current.kernelDocName(), current, obsolete.kernelDocName(), obsolete),
+                Map.of(current.id(), current, obsolete.id(), obsolete),
                 Map.of(current.id(), PUBLIC, obsolete.id(), PUBLIC), ADMIN, context(5));
 
         assertEquals(List.of("V3.2", "V2.8"), result.evidences().stream().map(Evidence::version).toList());
@@ -147,7 +147,7 @@ class EvidenceAssemblerTest {
     }
 
     @Test
-    @DisplayName("内核零命中：标记证据不足并建议换说法")
+    @DisplayName("零命中：标记证据不足并建议换说法")
     void emptyHitsMeansInsufficient() {
         RetrievalResult result = EvidenceAssembler.assemble(List.of(), Map.of(), Map.of(), ADMIN, context(5));
 
@@ -161,8 +161,8 @@ class EvidenceAssemblerTest {
     void allDroppedByPermissionExplainsWhy() {
         DocumentRef secret = doc(2, "QM-ZD-2026-021", "V0.9", "INDEXED");
         RetrievalResult result = EvidenceAssembler.assemble(
-                List.of(hit(secret.kernelDocName(), "s-1", 0.9, "秘密"), hit(secret.kernelDocName(), "s-2", 0.8, "秘密")),
-                Map.of(secret.kernelDocName(), secret), Map.of(secret.id(), SECRET), DEMO, context(5));
+                List.of(hit(secret.id(), "s-1", 0.9, "秘密"), hit(secret.id(), "s-2", 0.8, "秘密")),
+                Map.of(secret.id(), secret), Map.of(secret.id(), SECRET), DEMO, context(5));
 
         assertTrue(result.insufficient());
         assertTrue(result.hint().contains("访问权限"), result.hint());
@@ -174,11 +174,11 @@ class EvidenceAssemblerTest {
         DocumentRef visible = doc(1, "QM-ZD-2026-011", "V1.4", "INDEXED");
         DocumentRef secret = doc(2, "QM-ZD-2026-021", "V0.9", "INDEXED");
         List<RetrievedPassage> hits = List.of(
-                hit(secret.kernelDocName(), "s-1", 0.88, "秘密内容"),
-                hit(visible.kernelDocName(), "p-1", 0.60, "公开内容"));
+                hit(secret.id(), "s-1", 0.88, "秘密内容"),
+                hit(visible.id(), "p-1", 0.60, "公开内容"));
 
         RetrievalResult result = EvidenceAssembler.assemble(hits,
-                Map.of(visible.kernelDocName(), visible, secret.kernelDocName(), secret),
+                Map.of(visible.id(), visible, secret.id(), secret),
                 Map.of(visible.id(), PUBLIC, secret.id(), SECRET), DEMO, context(5));
 
         assertEquals(1, result.evidences().size());
@@ -195,10 +195,10 @@ class EvidenceAssemblerTest {
     void weakBestScoreIsInsufficientEvenWithEvidence() {
         DocumentRef noisy = doc(1, "QM-ZD-2026-021", "V0.9", "INDEXED");
         List<RetrievedPassage> hits = List.of(
-                hit(noisy.kernelDocName(), "n-1", 0.38, "沾边"),
-                hit(noisy.kernelDocName(), "n-2", 0.31, "更沾边"));
+                hit(noisy.id(), "n-1", 0.38, "沾边"),
+                hit(noisy.id(), "n-2", 0.31, "更沾边"));
 
-        RetrievalResult result = EvidenceAssembler.assemble(hits, Map.of(noisy.kernelDocName(), noisy),
+        RetrievalResult result = EvidenceAssembler.assemble(hits, Map.of(noisy.id(), noisy),
                 Map.of(noisy.id(), PUBLIC), ADMIN, context(5));
 
         assertEquals(1, result.evidences().size(), "证据仍然保留，交给上游决定是否展示引用");
@@ -213,8 +213,8 @@ class EvidenceAssemblerTest {
         DocumentRef good = doc(1, "QM-ZD-2026-003", "V3.2", "INDEXED");
 
         RetrievalResult result = EvidenceAssembler.assemble(
-                List.of(hit(good.kernelDocName(), "g-1", 0.46, "刚好过线")),
-                Map.of(good.kernelDocName(), good), Map.of(good.id(), PUBLIC), ADMIN, context(1));
+                List.of(hit(good.id(), "g-1", 0.46, "刚好过线")),
+                Map.of(good.id(), good), Map.of(good.id(), PUBLIC), ADMIN, context(1));
 
         assertFalse(result.insufficient());
     }
@@ -234,8 +234,8 @@ class EvidenceAssemblerTest {
         DocumentRef visible = doc(1, "QM-ZD-2026-011", "V1.4", "INDEXED");
 
         RetrievalResult result = EvidenceAssembler.assemble(
-                List.of(hit(visible.kernelDocName(), "v-1", 0.70, "公开内容")),
-                Map.of(visible.kernelDocName(), visible), Map.of(visible.id(), PUBLIC), DEMO,
+                List.of(hit(visible.id(), "v-1", 0.70, "公开内容")),
+                Map.of(visible.id(), visible), Map.of(visible.id(), PUBLIC), DEMO,
                 context(5, 2));
 
         assertEquals(1, result.evidences().size());
@@ -259,10 +259,10 @@ class EvidenceAssemblerTest {
         DocumentRef document = doc(3, "QM-ZD-2026-003", "V3.2", "INDEXED");
         List<RetrievedPassage> hits = new ArrayList<>();
         for (int i = 1; i <= 9; i++) {
-            hits.add(hit(document.kernelDocName(), "c-" + i, 0.5 + i * 0.01, "第 " + i + " 段"));
+            hits.add(hit(document.id(), "c-" + i, 0.5 + i * 0.01, "第 " + i + " 段"));
         }
 
-        RetrievalResult result = EvidenceAssembler.assemble(hits, Map.of(document.kernelDocName(), document),
+        RetrievalResult result = EvidenceAssembler.assemble(hits, Map.of(document.id(), document),
                 Map.of(document.id(), PUBLIC), ADMIN, context(5));
 
         // 砍到 3 条会把"答案行排在第 5 个片段上"的漏答问题（Q19）做出来，所以上限是 6 不是 3
@@ -273,15 +273,15 @@ class EvidenceAssemblerTest {
 
     @Test
     @DisplayName("片段序号随证据一起出来：账本靠 (document_id, chunk_index) 回查原文——"
-            + "chunk_id 是代理键（重解析会变），序号是自然键；内核通道没有本地序号就留空，不编造")
+            + "chunk_id 是代理键（重解析会变），序号是自然键；没有本地序号就留空，不编造")
     void carriesChunkIndexToFragment() {
         DocumentRef document = doc(3, "QM-ZD-2026-003", "V3.2", "INDEXED");
-        RetrievedPassage local = new RetrievedPassage("11", 7, document.kernelDocName(), "自建片段", 0.62, 0.38,
+        RetrievedPassage local = new RetrievedPassage("11", 7, document.id(), "自建片段", 0.62, 0.38,
                 "2026-09-29", 12, 34, 4, 4, "第三章", "PARAGRAPH", 0.5, 1, 1, 0.03, null);
-        RetrievedPassage fromKernel = hit(document.kernelDocName(), "k-1", 0.55, "内核片段");
+        RetrievedPassage other = hit(document.id(), "k-1", 0.55, "另一片段");
 
-        RetrievalResult result = EvidenceAssembler.assemble(List.of(local, fromKernel),
-                Map.of(document.kernelDocName(), document), Map.of(document.id(), PUBLIC), ADMIN, context(5));
+        RetrievalResult result = EvidenceAssembler.assemble(List.of(local, other),
+                Map.of(document.id(), document), Map.of(document.id(), PUBLIC), ADMIN, context(5));
 
         List<Evidence.Fragment> fragments = result.evidences().get(0).fragments();
         assertEquals(Integer.valueOf(7), fragmentOf(fragments, "11").chunkIndex());
@@ -294,11 +294,11 @@ class EvidenceAssemblerTest {
         DocumentRef cosineTop = doc(1, "A-1", "V1.0", "INDEXED");
         DocumentRef rerankTop = doc(2, "A-2", "V1.0", "INDEXED");
         List<RetrievedPassage> hits = List.of(
-                local(cosineTop.kernelDocName(), "a-1", 0.80, 0.15, "余弦高但答非所问"),
-                local(rerankTop.kernelDocName(), "b-1", 0.55, 0.92, "余弦一般但真相关"));
+                local(cosineTop.id(), "a-1", 0.80, 0.15, "余弦高但答非所问"),
+                local(rerankTop.id(), "b-1", 0.55, 0.92, "余弦一般但真相关"));
 
         RetrievalResult result = EvidenceAssembler.assemble(hits,
-                Map.of(cosineTop.kernelDocName(), cosineTop, rerankTop.kernelDocName(), rerankTop),
+                Map.of(cosineTop.id(), cosineTop, rerankTop.id(), rerankTop),
                 Map.of(cosineTop.id(), PUBLIC, rerankTop.id(), PUBLIC), ADMIN, context(5));
 
         assertEquals(List.of("A-2", "A-1"), result.evidences().stream().map(Evidence::docNo).toList());
@@ -313,11 +313,11 @@ class EvidenceAssemblerTest {
         DocumentRef best = doc(1, "A-1", "V1.0", "INDEXED");
         DocumentRef last = doc(3, "A-3", "V1.0", "INDEXED");
         List<RetrievedPassage> hits = List.of(
-                hit(last.kernelDocName(), "l-1", 0.50, "低"),
-                hit(best.kernelDocName(), "b-1", 0.90, "高"));
+                hit(last.id(), "l-1", 0.50, "低"),
+                hit(best.id(), "b-1", 0.90, "高"));
 
         RetrievalResult result = EvidenceAssembler.assemble(hits,
-                Map.of(best.kernelDocName(), best, last.kernelDocName(), last),
+                Map.of(best.id(), best, last.id(), last),
                 Map.of(best.id(), PUBLIC, last.id(), PUBLIC), ADMIN, context(5));
 
         assertEquals(List.of("A-1", "A-3"), result.evidences().stream().map(Evidence::docNo).toList());
@@ -337,19 +337,19 @@ class EvidenceAssemblerTest {
         return new EvidenceAssembler.Context(0.25, 0.45, 0.35, topN * 3, topN, 12L, blockedHitCount);
     }
 
-    private static DocumentRef doc(long id, String docNo, String version, String indexStatus) {
-        return new DocumentRef(id, docNo, docNo + " 的标题", version, "现行", "内部公开", "财务部",
-                docNo + "_" + version + ".pdf", indexStatus);
+    private static DocumentRef doc(long id, String docNo, String version, String chunkStatus) {
+        return new DocumentRef(id, docNo, docNo + " 的标题", version, "现行", "内部公开", "财务部", chunkStatus);
     }
 
-    private static RetrievedPassage hit(String kernelDocName, String chunkId, double score, String text) {
-        return new RetrievedPassage(chunkId, kernelDocName, text, score, 1d - score, "2026-09-29", 12, 34);
+    private static RetrievedPassage hit(long documentId, String chunkId, double score, String text) {
+        return new RetrievedPassage(chunkId, null, documentId, text, score, 1d - score, "2026-09-29", 12, 34,
+                null, null, null, null, 0, 0, 0, 0, null);
     }
 
     /** 自建通道的命中：带页码/两路名次/重排分。rerankScore 为 null 表示本次没走重排。 */
-    private static RetrievedPassage local(String kernelDocName, String chunkId, double score, Double rerankScore,
+    private static RetrievedPassage local(long documentId, String chunkId, double score, Double rerankScore,
                                           String text) {
-        return new RetrievedPassage(chunkId, 0, kernelDocName, text, score, 1d - score, "2026-09-29", 12, 34,
+        return new RetrievedPassage(chunkId, 0, documentId, text, score, 1d - score, "2026-09-29", 12, 34,
                 null, null, null, "PARAGRAPH", 0, 1, 0, 0.05, rerankScore);
     }
 }

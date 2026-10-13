@@ -1,7 +1,13 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
-import { domainsApi, ingestApi } from '../api/client.js'
+import { domainsApi, ingestApi, mediaApi } from '../api/client.js'
 import DocumentViewer from './DocumentViewer.vue'
+
+// admin=false 时是用户门户的只读视图：隐藏上传/扫描/重试/状态切换等管理动作。
+// 后端对这些接口本就限 admin，这里只是别给用户一个点了必然 403 的入口。
+const props = defineProps({
+  admin: { type: Boolean, default: false }
+})
 
 // 知识域列表（上传时选域）；viewer 拿不到就留空，上传按钮随后提示
 const domains = ref([])
@@ -17,7 +23,6 @@ async function loadDomains() {
 const documents = ref([])
 const tasks = ref([])
 const summary = ref(null)
-const kernelVectors = ref(null)
 const busy = ref('')
 const error = ref('')
 const notice = ref('')
@@ -67,7 +72,7 @@ function openUpload(base = null) {
     docNo: base?.docNo || '',
     title: base?.title || '',
     version: '',
-    docStatus: '现行',
+    docStatus: props.admin ? '现行' : '草案·未生效',
     secrecy: base?.secrecy || '内部公开',
     ownerDept: base?.ownerDept || '',
     file: null
@@ -130,8 +135,10 @@ const versionCount = computed(() => {
   return counts
 })
 
-const indexedCount = computed(() => documents.value.filter((d) => d.indexStatus === 'INDEXED').length)
-const failedCount = computed(() => documents.value.filter((d) => d.indexStatus === 'FAILED').length)
+const readyCount = computed(() => documents.value.filter((d) => d.chunkStatus === 'INDEXED').length)
+const failedCount = computed(() => documents.value.filter((d) => d.chunkStatus === 'FAILED').length)
+// 待审草案：管理员在列表里审核（通过→现行，驳回→已废止）。草案不参与检索。
+const pendingDocs = computed(() => documents.value.filter((d) => d.docStatus && d.docStatus.includes('草案')))
 
 async function load() {
   error.value = ''
@@ -142,24 +149,19 @@ async function load() {
     error.value = e.message
     return
   }
-  // 同步任务与内核自检都是管理员接口。viewer 打开这一页是为了**看文档**（还要用查看器），
-  // 不能因为两个管理接口 403 就把整页变成"请求失败"——文档列表本身对 viewer 是开放的。
+  // 同步任务是管理员接口。viewer 打开这一页是为了**看文档**（还要用查看器），
+  // 不能因为这个管理接口 403 就把整页变成"请求失败"——文档列表本身对 viewer 是开放的。
   try {
     tasks.value = (await ingestApi.tasks(50)).tasks
   } catch {
     tasks.value = []
-  }
-  try {
-    kernelVectors.value = (await domainsApi.selfCheck()).vectorCount ?? null
-  } catch {
-    kernelVectors.value = null
   }
 }
 
 async function scan() {
   busy.value = 'scan'
   error.value = ''
-  notice.value = '正在扫描并上传：每份文档都要过一遍向量化，请耐心等待…'
+  notice.value = '正在扫描并入库：每份文档都要解析并向量化，请耐心等待…'
   try {
     summary.value = await ingestApi.scan()
     notice.value = ''
@@ -218,6 +220,27 @@ function formatTime(value) {
   return value ? value.replace('T', ' ').slice(0, 19) : '—'
 }
 
+// INDEXED=好，FAILED=坏，其余（SKIPPED/PENDING/NONE）用中性色——避免"没做"被当成"做坏了"
+function statusClassOf(status) {
+  if (status === 'INDEXED') return 'ok'
+  if (status === 'FAILED') return 'err'
+  return 'warn'
+}
+
+async function reindexImages() {
+  busy.value = 'images'
+  error.value = ''
+  try {
+    const result = await mediaApi.reindex(false)
+    notice.value = `图片索引重建：共 ${result.total}，重建 ${result.indexed}，跳过 ${result.skipped}，失败 ${result.failed}`
+  } catch (e) {
+    error.value = e.message
+  } finally {
+    busy.value = ''
+    await load()
+  }
+}
+
 onMounted(() => {
   load()
   loadDomains()
@@ -230,13 +253,16 @@ onMounted(() => {
       <div>
         <h1>文档与同步</h1>
         <p class="desc">
-          扫描配置目录 → 算内容哈希 → 内容没变就跳过 → 上传内核并校验向量。每次尝试都留痕，失败可直接重试。
+          扫描配置目录 → 算内容哈希 → 内容没变就跳过 → 解析并向量化。每次尝试都留痕，失败可直接重试。
         </p>
       </div>
       <div class="head-actions">
-        <button class="btn" :disabled="!!busy" @click="retryAll">重试全部失败项</button>
+        <button v-if="admin" class="btn" :disabled="!!busy" @click="retryAll">重试全部失败项</button>
         <button class="btn" @click="openUpload()">上传文档</button>
-        <button class="btn primary" :disabled="!!busy" @click="scan">
+        <button v-if="admin" class="btn" :disabled="!!busy" @click="reindexImages">
+          {{ busy === 'images' ? '重建中…' : '重建图片索引' }}
+        </button>
+        <button v-if="admin" class="btn primary" :disabled="!!busy" @click="scan">
           {{ busy === 'scan' ? '同步中…' : '立即同步' }}
         </button>
       </div>
@@ -247,9 +273,9 @@ onMounted(() => {
 
     <section class="stats">
       <div><span>文档总数</span><b>{{ documents.length }}</b></div>
-      <div><span>已入库</span><b>{{ indexedCount }}</b></div>
-      <div><span>入库失败</span><b>{{ failedCount }}</b></div>
-      <div><span>内核向量</span><b>{{ summary?.vectorCountAfter ?? kernelVectors ?? '—' }}</b></div>
+      <div><span>片段就绪</span><b>{{ readyCount }}</b></div>
+      <div><span>片段失败</span><b>{{ failedCount }}</b></div>
+      <div v-if="admin"><span>图片资产</span><b>{{ documents.reduce((n, d) => n + (d.assetCount || 0), 0) }}</b></div>
     </section>
 
     <section v-if="summary" class="card">
@@ -267,7 +293,37 @@ onMounted(() => {
         <div><span>入库</span><b>{{ summary.uploaded }}</b></div>
         <div><span>跳过</span><b>{{ summary.skipped }}</b></div>
         <div><span>失败</span><b>{{ summary.failed }}</b></div>
-        <div><span>向量变化</span><b>{{ summary.vectorCountBefore ?? '—' }} → {{ summary.vectorCountAfter ?? '—' }}</b></div>
+      </div>
+    </section>
+
+    <section v-if="admin && pendingDocs.length" class="card">
+      <header class="card-head">
+        <div>
+          <h2>待审核</h2>
+          <p class="desc">用户上传的草案。通过后转「现行」才进检索；驳回转「已废止」。</p>
+        </div>
+        <code class="code">{{ pendingDocs.length }} 份</code>
+      </header>
+      <div class="table-wrap">
+        <table class="grid">
+          <thead>
+            <tr><th>文档编号</th><th>标题</th><th>版本</th><th>知识域</th><th>上传者</th><th></th></tr>
+          </thead>
+          <tbody>
+            <tr v-for="doc in pendingDocs" :key="doc.id">
+              <td><code>{{ doc.docNo }}</code></td>
+              <td>{{ doc.title }}</td>
+              <td>{{ doc.version }}</td>
+              <td>{{ doc.domainCode }}</td>
+              <td>{{ doc.uploadedBy || '—' }}</td>
+              <td class="row-actions">
+                <button class="btn tiny primary" :disabled="busy === `status-${doc.id}`" @click="changeStatus(doc, '现行')">通过</button>
+                <button class="btn tiny" :disabled="busy === `status-${doc.id}`" @click="changeStatus(doc, '已废止')">驳回</button>
+                <button class="btn tiny" @click="openViewer(doc)">查看</button>
+              </td>
+            </tr>
+          </tbody>
+        </table>
       </div>
     </section>
 
@@ -275,7 +331,7 @@ onMounted(() => {
       <header class="card-head">
         <div>
           <h2>文档</h2>
-          <p class="desc">文档级 ACL 在入库时按密级写入，检索侧是 fail-closed：没有授权行就查不到。「解析」是自建片段的就绪状态——内核收下了不等于我们能按片段查看，两件事分开记。</p>
+          <p class="desc">文档级 ACL 在入库时按密级写入，检索侧是 fail-closed：没有授权行就查不到。「解析」是片段就绪状态——只有它就绪的文档才会被检索。</p>
         </div>
         <code class="code">{{ documents.length }} 份</code>
       </header>
@@ -284,7 +340,7 @@ onMounted(() => {
           <thead>
             <tr>
               <th>文档编号</th><th>标题</th><th>版本</th><th>状态</th>
-              <th>密级</th><th>知识域</th><th>入库</th><th>解析</th><th>内核文件名</th><th></th>
+              <th>密级</th><th>上传者</th><th>知识域</th><th>解析</th><th>图片</th><th></th>
             </tr>
           </thead>
           <tbody>
@@ -299,6 +355,7 @@ onMounted(() => {
               </td>
               <td>
                 <select
+                  v-if="admin"
                   class="status-select"
                   :value="doc.docStatus"
                   :disabled="busy === `status-${doc.id}`"
@@ -308,18 +365,23 @@ onMounted(() => {
                   <option>已废止</option>
                   <option>草案·未生效</option>
                 </select>
+                <span v-else>{{ doc.docStatus }}</span>
               </td>
               <td>{{ doc.secrecy }}</td>
+              <td>{{ doc.uploadedBy || '—' }}</td>
               <td>{{ doc.domainCode }}</td>
-              <td><span :class="['pill', doc.indexStatus === 'INDEXED' ? 'ok' : 'err']">{{ doc.indexStatus }}</span></td>
               <td>
-                <span :class="['pill', doc.chunkStatus === 'INDEXED' ? 'ok' : 'warn']">{{ doc.chunkStatus }}</span>
+                <span :class="['pill', statusClassOf(doc.chunkStatus)]">{{ doc.chunkStatus }}</span>
                 <span class="chunk-count">{{ doc.chunkCount }} 段</span>
               </td>
-              <td><code>{{ doc.kernelDocName }}</code></td>
+              <td>
+                <span :class="['pill', statusClassOf(doc.assetStatus)]">{{ doc.assetStatus }}</span>
+                <span class="chunk-count">{{ doc.assetCount }} 张</span>
+              </td>
               <td class="row-actions">
-                <button class="btn tiny" @click="openUpload(doc)">传新版本</button>
+                <button v-if="admin" class="btn tiny" @click="openUpload(doc)">传新版本</button>
                 <button
+                  v-if="admin"
                   class="btn tiny"
                   :disabled="!!previewBusy"
                   @click="openPreview(doc)"
@@ -332,7 +394,7 @@ onMounted(() => {
       </div>
     </section>
 
-    <section class="card">
+    <section v-if="admin" class="card">
       <header class="card-head">
         <div>
           <h2>同步任务</h2>
@@ -414,7 +476,8 @@ onMounted(() => {
           <div>
             <h2>上传文档</h2>
             <p class="desc">
-              支持 PDF / DOCX。上传会写盘并登记 manifest.json，然后入内核与解析；同一「文档编号 + 版本」重复上传视为覆盖。
+              支持 PDF / DOCX / PPTX / 图片（png/jpg/jpeg/gif/bmp）。上传会写盘并登记 manifest.json，
+              然后解析并向量化；图片单独建图片索引（供「找图」）。同一「文档编号 + 版本」重复上传视为覆盖。
             </p>
           </div>
           <button class="btn tiny" @click="upload = null">关闭</button>
@@ -429,21 +492,24 @@ onMounted(() => {
           <label class="field"><span>文档编号</span><input v-model="upload.docNo" placeholder="如 QM-ZD-2026-030" /></label>
           <label class="field"><span>标题</span><input v-model="upload.title" /></label>
           <label class="field"><span>版本</span><input v-model="upload.version" placeholder="如 V1.0" /></label>
-          <label class="field">
+          <label v-if="admin" class="field">
             <span>状态</span>
             <select v-model="upload.docStatus">
               <option>现行</option><option>已废止</option><option>草案·未生效</option>
             </select>
           </label>
-          <label class="field">
+          <label v-if="admin" class="field">
             <span>密级</span>
             <select v-model="upload.secrecy">
               <option>内部公开</option><option>秘密</option>
             </select>
           </label>
-          <label class="field"><span>责任部门 <em>可选</em></span><input v-model="upload.ownerDept" /></label>
-          <label class="field"><span>文件</span><input type="file" accept=".pdf,.docx" @change="onFileChosen" /></label>
+          <label v-if="admin" class="field"><span>责任部门 <em>可选</em></span><input v-model="upload.ownerDept" /></label>
+          <label class="field"><span>文件</span><input type="file" accept=".pdf,.docx,.png,.jpg,.jpeg,.gif,.bmp" @change="onFileChosen" /></label>
         </div>
+        <p v-if="!admin" class="desc upload-hint">
+          提交后进入「待审核」（草案·未生效），管理员通过后才进检索。状态与密级由管理员审核时确定。
+        </p>
         <div v-if="uploadError" class="banner err">{{ uploadError }}</div>
         <footer class="modal-foot">
           <button class="btn" @click="upload = null">取消</button>
@@ -502,5 +568,9 @@ onMounted(() => {
   height: 28px;
   padding: 0 6px;
   font-size: 12px;
+}
+
+.upload-hint {
+  margin-top: 10px;
 }
 </style>

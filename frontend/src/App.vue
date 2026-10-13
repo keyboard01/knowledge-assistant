@@ -1,19 +1,15 @@
 <script setup>
-import { computed, onMounted, ref } from 'vue'
-import SettingsView from './views/SettingsView.vue'
-import KernelView from './views/KernelView.vue'
+import { onMounted, ref } from 'vue'
 import IngestView from './views/IngestView.vue'
+import ImageSearchView from './views/ImageSearchView.vue'
 import AskView from './views/AskView.vue'
-import ObserveView from './views/ObserveView.vue'
 import LoginView from './views/LoginView.vue'
 import { authApi, getToken, setToken } from './api/client.js'
 
+// 用户门户：只有问答与文档查看。管理能力全在独立入口 /admin.html。
 const view = ref('ask')
 const user = ref(null)
 const ready = ref(false)
-
-// 运行记录接口限管理员（账本里存着全部人的提问原话），非管理员就别给一个点了必然报错的入口
-const isAdmin = computed(() => user.value?.roleCode === 'admin')
 
 async function loadUser() {
   if (!getToken()) {
@@ -56,10 +52,8 @@ onMounted(loadUser)
       <div class="brand">企业知识助手</div>
       <nav>
         <span :class="{ active: view === 'ask' }" @click="view = 'ask'">知识问答</span>
-        <span :class="{ active: view === 'kernel' }" @click="view = 'kernel'">知识域与内核</span>
-        <span :class="{ active: view === 'ingest' }" @click="view = 'ingest'">文档与同步</span>
-        <span v-if="isAdmin" :class="{ active: view === 'observe' }" @click="view = 'observe'">运行记录</span>
-        <span :class="{ active: view === 'settings' }" @click="view = 'settings'">系统配置</span>
+        <span :class="{ active: view === 'images' }" @click="view = 'images'">找图</span>
+        <span :class="{ active: view === 'docs' }" @click="view = 'docs'">文档中心</span>
       </nav>
       <div class="who">
         <span>{{ user.displayName || user.username }}（{{ user.roleCode }}）</span>
@@ -68,10 +62,8 @@ onMounted(loadUser)
     </header>
     <main>
       <AskView v-if="view === 'ask'" />
-      <KernelView v-else-if="view === 'kernel'" />
-      <IngestView v-else-if="view === 'ingest'" />
-      <ObserveView v-else-if="view === 'observe'" />
-      <SettingsView v-else />
+      <ImageSearchView v-else-if="view === 'images'" />
+      <IngestView v-else :admin="false" />
     </main>
   </div>
 </template>

@@ -18,6 +18,7 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
 
 import io.github.keyboard01.assistant.security.AccessFilter;
+import io.github.keyboard01.assistant.security.AppUser;
 import io.github.keyboard01.assistant.security.CurrentUser;
 import io.github.keyboard01.assistant.security.RequireRole;
 
@@ -31,14 +32,16 @@ public class IngestController {
      */
     public record DocumentView(long id, String domainCode, String docNo, String title, String version,
                                String docStatus, String secrecy, String ownerDept, String mimeType,
-                               Long fileSize, String indexStatus, String chunkStatus, Integer chunkCount,
-                               String kernelDocName, String lastError) {
+                               Long fileSize, String chunkStatus, Integer chunkCount,
+                               String lastError, String uploadedBy,
+                               String kind, String assetStatus, Integer assetCount) {
 
         static DocumentView of(DocumentRepository.Row row) {
             return new DocumentView(row.id(), row.domainCode(), row.docNo(), row.title(), row.version(),
                     row.docStatus(), row.secrecy(), row.ownerDept(), row.mimeType(), row.fileSize(),
-                    row.indexStatus(), row.chunkStatus(), row.chunkCount(),
-                    row.kernelDocName(), row.lastError());
+                    row.chunkStatus(), row.chunkCount(),
+                    row.lastError(), row.uploadedBy(),
+                    row.kind(), row.assetStatus(), row.assetCount());
         }
     }
 
@@ -52,11 +55,16 @@ public class IngestController {
         this.tasks = tasks;
     }
 
-    /** 只返回当前身份可见的文档：P1 的权限过滤先落在这一步（T06）。 */
+    /**
+     * 文档列表：受域级 + 文档级 ACL 限制。非管理员再收窄为"现行 + 自己上传的草案"，
+     * 管理员看全部（含待审草案，否则无法审核）。
+     */
     @GetMapping("/documents")
     public Map<String, Object> documents() {
-        AccessFilter filter = AccessFilter.of(CurrentUser.subject(), AccessFilter.DEFAULT_ALIAS);
-        return Map.of("documents", documents.findVisible(filter).stream().map(DocumentView::of).toList());
+        AppUser user = CurrentUser.require();
+        AccessFilter filter = AccessFilter.of(user.subject(), AccessFilter.DEFAULT_ALIAS);
+        return Map.of("documents", documents.findVisible(filter, user.username(), user.hasRole("admin"))
+                .stream().map(DocumentView::of).toList());
     }
 
     @PostMapping("/ingest/scan")
@@ -82,9 +90,11 @@ public class IngestController {
         return service.preview(request.documentId());
     }
 
-    /** 浏览器上传（P1 管理能力）：写盘 + 登记 manifest + 入内核 + 解析 + 按密级写 ACL。 */
+    /**
+     * 浏览器上传：写盘 + 登记 manifest + 入内核 + 解析 + 按密级写 ACL。
+     * 登录即可（不再限 admin），但要过域级门；普通用户一律落"草案·未生效 + 内部公开"等审核。
+     */
     @PostMapping(value = "/ingest/upload", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
-    @RequireRole("admin")
     public IngestService.FileResult upload(
             @RequestParam("file") MultipartFile file,
             @RequestParam String domainCode,
@@ -99,10 +109,11 @@ public class IngestController {
         if (file == null || file.isEmpty()) {
             throw new IllegalArgumentException("请选择要上传的文件");
         }
+        AppUser user = CurrentUser.require();
         IngestService.UploadRequest request = new IngestService.UploadRequest(domainCode, docNo, title, version,
                 docStatus, secrecy, ownerDept, effectiveFrom, effectiveTo,
                 file.getOriginalFilename(), file.getBytes());
-        return service.upload(request);
+        return service.upload(request, user.subject(), user.hasRole("admin"));
     }
 
     public record StatusRequest(String docStatus) {

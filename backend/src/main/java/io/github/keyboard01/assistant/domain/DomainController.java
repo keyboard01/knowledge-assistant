@@ -1,6 +1,5 @@
 package io.github.keyboard01.assistant.domain;
 
-import java.util.List;
 import java.util.Map;
 
 import org.springframework.http.HttpStatus;
@@ -23,7 +22,7 @@ import io.github.keyboard01.assistant.security.RequireRole;
 public class DomainController {
 
     /** 新建/更新的载荷。code 只在新建时用；改 code 等于换一个域，不做。 */
-    public record DomainRequest(String code, String name, String description, String workspaceSlug, Boolean enabled) {
+    public record DomainRequest(String code, String name, String description, Boolean enabled) {
     }
 
     private final DomainService service;
@@ -41,21 +40,11 @@ public class DomainController {
         return Map.of("domains", service.list(CurrentUser.subject()));
     }
 
-    /** 幂等地把全部知识域对应的工作区创建到 AnythingLLM。 */
-    @PostMapping("/provision")
-    @RequireRole("admin")
-    public Map<String, Object> provision() {
-        List<DomainService.ProvisionResult> results = service.provision();
-        boolean allOk = results.stream().noneMatch(r -> "FAILED".equals(r.action()));
-        return Map.of("ok", allOk, "results", results);
-    }
-
-    /** 新建知识域（admin）。落库后尽力初始化其内核工作区。 */
+    /** 新建知识域（admin）。 */
     @PostMapping
     @RequireRole("admin")
     public DomainService.DomainView create(@RequestBody DomainRequest request) {
-        return service.create(request.code(), request.name(), request.workspaceSlug(), request.description(),
-                request.enabled());
+        return service.create(request.code(), request.name(), request.description(), request.enabled());
     }
 
     /** 更新知识域的名称/描述/启用状态（admin）。 */
@@ -73,15 +62,9 @@ public class DomainController {
         service.delete(code);
     }
 
-    /** 单个域的工作区初始化（admin，幂等）。 */
-    @PostMapping("/{code}/provision")
-    @RequireRole("admin")
-    public DomainService.ProvisionResult provisionOne(@PathVariable String code) {
-        return service.provisionOne(code);
-    }
-
-    /** 内核自检；启动时也会自动跑一次并写日志。 */
+    /** 本地自检（admin）：文档目录、图片资产目录、本地检索链路、向量化配置。 */
     @GetMapping("/selfcheck")
+    @RequireRole("admin")
     public DomainService.SelfCheckResult selfCheck() {
         return service.selfCheck();
     }

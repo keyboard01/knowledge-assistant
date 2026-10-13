@@ -13,6 +13,7 @@ import io.github.keyboard01.assistant.security.AccessFilter;
 import io.github.keyboard01.assistant.security.AccessSubject;
 import io.github.keyboard01.assistant.security.AclRule;
 import io.github.keyboard01.assistant.security.DocumentAclRepository;
+import io.github.keyboard01.assistant.security.DocumentVisibility;
 
 /**
  * {@link DeepTools} 的落地：检索走既有检索链路，读取走本地片段表。
@@ -75,7 +76,7 @@ public class RetrievalTools implements DeepTools {
         // rank 先给 0：编号由合并阶段统一分配（全局连续），读取阶段自己编一个号会和检索来的证据撞号。
         // score 给 0：这段不是"算出来的相关"，是"顺着读下去的上下文"，用分数假装它相关会污染排序。
         Evidence evidence = new Evidence(0, doc.id(), doc.docNo(), doc.title(), doc.version(), doc.docStatus(),
-                doc.secrecy(), doc.ownerDept(), doc.kernelDocName(), 0d, fragments);
+                doc.secrecy(), doc.ownerDept(), 0d, fragments);
         return new Outcome(List.of(evidence), 0, null, null);
     }
 
@@ -85,8 +86,8 @@ public class RetrievalTools implements DeepTools {
     }
 
     /**
-     * 文档存在 + 当前身份可读。两个条件合成一个 Optional：外部只需要知道"能不能读"，
-     * 分开返回等于把"这份文档存在但你没权限"这条信息漏出去。
+     * 文档存在 + 当前身份可读 + 文档现行。三个条件合成一个 Optional：外部只需要知道"能不能读"，
+     * 分开返回等于把"这份文档存在但你没权限/还没生效"这条信息漏出去。
      */
     private Optional<DocumentRepository.Row> visible(long documentId) {
         Optional<DocumentRepository.Row> row = documents.findById(documentId);
@@ -96,6 +97,10 @@ public class RetrievalTools implements DeepTools {
         AccessFilter filter = AccessFilter.of(subject, AccessFilter.DEFAULT_ALIAS);
         Map<Long, List<AclRule>> acl = aclRepository.findByDocumentIds(List.of(documentId));
         if (!filter.allows(acl.getOrDefault(documentId, List.of()))) {
+            return Optional.empty();
+        }
+        // 与检索同一口径：草案/废止不参与（深度通道按 id 读，不能绕开这道门）
+        if (!DocumentVisibility.isCurrent(row.get().docStatus())) {
             return Optional.empty();
         }
         return row;

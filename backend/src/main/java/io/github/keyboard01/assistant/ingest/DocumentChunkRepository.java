@@ -10,6 +10,7 @@ import org.springframework.stereotype.Repository;
 import io.github.keyboard01.assistant.parse.ParsedChunk;
 import io.github.keyboard01.assistant.retrieval.ChunkRow;
 import io.github.keyboard01.assistant.security.AccessFilter;
+import io.github.keyboard01.assistant.security.DocumentVisibility;
 
 /**
  * 片段仓库：自建解析的落点，也是自建检索的取数口。
@@ -24,7 +25,7 @@ public class DocumentChunkRepository {
     /** 检索查询共用的列。 */
     private static final String COLUMNS = """
             c.id as chunk_id, c.document_id, c.chunk_index, c.content, c.section_path, c.page_from, c.page_to,
-            c.kind, d.doc_no, d.title, d.version, d.doc_status, d.secrecy, d.owner_dept, d.kernel_doc_name
+            c.kind, d.doc_no, d.title, d.version, d.doc_status, d.secrecy, d.owner_dept
             """;
 
     private static final RowMapper<ChunkRow> ROW = (rs, rowNum) -> new ChunkRow(
@@ -42,7 +43,6 @@ public class DocumentChunkRepository {
             rs.getString("doc_status"),
             rs.getString("secrecy"),
             rs.getString("owner_dept"),
-            rs.getString("kernel_doc_name"),
             rs.getDouble("score"));
 
     private final JdbcTemplate jdbc;
@@ -186,11 +186,11 @@ public class DocumentChunkRepository {
                 select %s, 1 - (c.embedding <=> cast(? as vector)) as score
                   from document_chunk c
                   join document d on d.id = c.document_id
-                 where d.domain_code = ? and c.embedding is not null and %s
+                 where d.domain_code = ? and c.embedding is not null and d.chunk_status = 'INDEXED' and %s and %s
                    and 1 - (c.embedding <=> cast(? as vector)) >= ?
                  order by c.embedding <=> cast(? as vector)
                  limit ?
-                """.formatted(COLUMNS, filter.sql());
+                """.formatted(COLUMNS, filter.sql(), DocumentVisibility.currentSql("d"));
         return new Query(sql, params.toArray());
     }
 
@@ -215,11 +215,11 @@ public class DocumentChunkRepository {
                 select %s, word_similarity(?, c.content) as score
                   from document_chunk c
                   join document d on d.id = c.document_id
-                 where d.domain_code = ? and c.content is not null and %s
+                 where d.domain_code = ? and c.content is not null and d.chunk_status = 'INDEXED' and %s and %s
                    and word_similarity(?, c.content) >= ?
                  order by score desc
                  limit ?
-                """.formatted(COLUMNS, filter.sql());
+                """.formatted(COLUMNS, filter.sql(), DocumentVisibility.currentSql("d"));
         return new Query(sql, params.toArray());
     }
 
@@ -248,9 +248,9 @@ public class DocumentChunkRepository {
         String sql = """
                 select count(*) from document_chunk c
                   join document d on d.id = c.document_id
-                 where d.domain_code = ? and c.embedding is not null and not (%s)
+                 where d.domain_code = ? and c.embedding is not null and d.chunk_status = 'INDEXED' and %s and not (%s)
                    and 1 - (c.embedding <=> cast(? as vector)) >= ?
-                """.formatted(filter.sql());
+                """.formatted(DocumentVisibility.currentSql("d"), filter.sql());
         return new Query(sql, params.toArray());
     }
 

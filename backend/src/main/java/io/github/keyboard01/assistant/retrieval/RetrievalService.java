@@ -9,6 +9,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import io.github.keyboard01.assistant.domain.DomainRepository;
+import io.github.keyboard01.assistant.domain.DomainService;
 import io.github.keyboard01.assistant.domain.KnowledgeDomain;
 import io.github.keyboard01.assistant.ingest.DocumentRepository;
 import io.github.keyboard01.assistant.security.AccessFilter;
@@ -17,10 +18,9 @@ import io.github.keyboard01.assistant.security.AclRule;
 import io.github.keyboard01.assistant.security.DocumentAclRepository;
 
 /**
- * 检索编排（P1）：内核召回 → 反查本地登记 → 权限过滤 → 聚合成证据 → 候选不足提示。
+ * 检索编排：召回 → 反查本地登记 → 权限过滤 → 聚合成证据 → 候选不足提示。
  *
- * <p>这里不碰 AnythingLLM 的接口细节（那是 adapters 的事），也不做生成——只负责把"应该被看到的证据"
- * 摆到桌面上，并留下可解释的账本。</p>
+ * <p>不做生成——只负责把"应该被看到的证据"摆到桌面上，并留下可解释的账本。</p>
  */
 @Service
 public class RetrievalService {
@@ -66,13 +66,16 @@ public class RetrievalService {
     private final DocumentRepository documents;
     private final DocumentAclRepository aclRepository;
     private final DomainRepository domains;
+    private final DomainService domainService;
 
     public RetrievalService(KnowledgeRetriever retriever, DocumentRepository documents,
-                            DocumentAclRepository aclRepository, DomainRepository domains) {
+                            DocumentAclRepository aclRepository, DomainRepository domains,
+                            DomainService domainService) {
         this.retriever = retriever;
         this.documents = documents;
         this.aclRepository = aclRepository;
         this.domains = domains;
+        this.domainService = domainService;
     }
 
     public RetrievalResult search(AccessSubject subject, String domainCode, String question, Integer topN,
@@ -83,6 +86,8 @@ public class RetrievalService {
         double floor = clamp(minScore == null ? DEFAULT_MIN_SCORE : minScore, 0d, 1d);
         int kernelTopN = Math.min(Math.max(want * OVERFETCH_FACTOR, want + 4), MAX_KERNEL_TOPN);
 
+        // 先过域级门（fail-closed，域不存在与无权访问同一种拒绝），再判域是否存在/启用。
+        domainService.requireAccessible(subject, code);
         KnowledgeDomain domain = domains.findByCode(code)
                 .orElseThrow(() -> new IllegalArgumentException("知识域不存在：" + code));
         if (!domain.enabled()) {
@@ -92,9 +97,9 @@ public class RetrievalService {
         AccessFilter filter = AccessFilter.of(subject, AccessFilter.DEFAULT_ALIAS);
         long startedAt = System.nanoTime();
         KnowledgeRetriever.Outcome retrieved = retriever.retrieve(
-                new KnowledgeRetriever.Query(domain.workspaceSlug(), code, filter, asked, kernelTopN, floor));
+                new KnowledgeRetriever.Query(code, filter, asked, kernelTopN, floor));
         List<RetrievedPassage> hits = retrieved.hits();
-        Map<String, DocumentRef> known = loadDocuments(hits);
+        Map<Long, DocumentRef> known = loadDocuments(hits);
         Map<Long, List<AclRule>> acl = aclRepository.findByDocumentIds(known.values().stream()
                 .map(DocumentRef::id).distinct().toList());
         long elapsedMs = (System.nanoTime() - startedAt) / 1_000_000L;
@@ -120,20 +125,18 @@ public class RetrievalService {
         return result;
     }
 
-    /** 命中只带得回内核文档名，这一步就是"片段 → 本地文档"的唯一入口。 */
-    private Map<String, DocumentRef> loadDocuments(List<RetrievedPassage> hits) {
-        List<String> names = hits.stream().map(RetrievedPassage::kernelDocName)
-                .filter(name -> name != null && !name.isBlank()).distinct().toList();
-        if (names.isEmpty()) {
+    /** 命中片段带着 {@code document_id}，这一步就是"片段 → 本地文档"的唯一入口。 */
+    private Map<Long, DocumentRef> loadDocuments(List<RetrievedPassage> hits) {
+        List<Long> ids = hits.stream().map(RetrievedPassage::documentId).distinct().toList();
+        if (ids.isEmpty()) {
             return Map.of();
         }
-        Map<String, DocumentRef> byKernelName = new LinkedHashMap<>();
-        for (DocumentRepository.Row row : documents.findByKernelDocNames(names)) {
-            byKernelName.put(row.kernelDocName(), new DocumentRef(row.id(), row.docNo(), row.title(),
-                    row.version(), row.docStatus(), row.secrecy(), row.ownerDept(), row.kernelDocName(),
-                    row.indexStatus()));
+        Map<Long, DocumentRef> byId = new LinkedHashMap<>();
+        for (DocumentRepository.Row row : documents.findByIds(ids)) {
+            byId.put(row.id(), new DocumentRef(row.id(), row.docNo(), row.title(), row.version(),
+                    row.docStatus(), row.secrecy(), row.ownerDept(), row.chunkStatus()));
         }
-        return byKernelName;
+        return byId;
     }
 
     private static String require(String value, String message) {

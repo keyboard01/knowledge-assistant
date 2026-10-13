@@ -6,5 +6,5 @@ package io.github.keyboard01.assistant.retrieval;
  */
 public record ChunkRow(long chunkId, long documentId, int chunkIndex, String content, String sectionPath,
                        Integer pageFrom, Integer pageTo, String kind, String docNo, String title, String version,
-                       String docStatus, String secrecy, String ownerDept, String kernelDocName, double score) {
+                       String docStatus, String secrecy, String ownerDept, double score) {
 }

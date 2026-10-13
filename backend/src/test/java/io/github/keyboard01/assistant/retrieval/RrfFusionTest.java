@@ -88,6 +88,6 @@ class RrfFusionTest {
 
     private static ChunkRow row(long chunkId, double score) {
         return new ChunkRow(chunkId, 1L, 0, "正文" + chunkId, null, null, null, "PARAGRAPH",
-                "D-1", "D-1 的标题", "V1.0", "现行", "内部公开", "财务部", "D-1_V1.0.pdf", score);
+                "D-1", "D-1 的标题", "V1.0", "现行", "内部公开", "财务部", score);
     }
 }

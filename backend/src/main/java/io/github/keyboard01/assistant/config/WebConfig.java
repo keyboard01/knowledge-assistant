@@ -27,11 +27,12 @@ public class WebConfig implements WebMvcConfigurer {
     /**
      * 默认拒绝：/api/** 一律要求登录，只放行登录接口本身。
      * 这样之后新增的接口默认就是受保护的——忘记加鉴权的代价是"多要一次登录"，而不是"少一次鉴权"。
+     * 钉钉登录入口整段免登录：调用它的正是"还没登录、想登录"的人。
      */
     @Override
     public void addInterceptors(InterceptorRegistry registry) {
         registry.addInterceptor(authInterceptor)
                 .addPathPatterns("/api/**")
-                .excludePathPatterns("/api/auth/login");
+                .excludePathPatterns("/api/auth/login", "/api/auth/dingtalk/**");
     }
 }

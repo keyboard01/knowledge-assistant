@@ -11,11 +11,13 @@ import java.util.stream.Stream;
 
 import org.springframework.stereotype.Service;
 
-import io.github.keyboard01.assistant.adapters.anythingllm.KernelGateway;
 import io.github.keyboard01.assistant.adapters.OpenAiCompatibleClient;
 import io.github.keyboard01.assistant.adapters.EmbeddingProbeClient;
+import io.github.keyboard01.assistant.adapters.dingtalk.DingTalkClient;
 import io.github.keyboard01.assistant.adapters.rerank.RerankClient;
 import io.github.keyboard01.assistant.adapters.layout.LayoutClient;
+import io.github.keyboard01.assistant.adapters.vision.OpenAiCompatibleVisionClient;
+import io.github.keyboard01.assistant.adapters.imageembedding.DashScopeMultimodalEmbedder;
 import io.github.keyboard01.assistant.settings.SettingModels.FieldDef;
 import io.github.keyboard01.assistant.settings.SettingModels.FieldView;
 import io.github.keyboard01.assistant.settings.SettingModels.GroupView;
@@ -24,12 +26,14 @@ import io.github.keyboard01.assistant.settings.SettingModels.TestResult;
 @Service
 public class SettingService {
 
-    public static final String GROUP_ANYTHINGLLM = "anythingllm";
     public static final String GROUP_EMBEDDING = "embedding";
     public static final String GROUP_LLM = "llm";
     public static final String GROUP_INGEST = "ingest";
     public static final String GROUP_RERANK = "rerank";
     public static final String GROUP_LAYOUT = "layout";
+    public static final String GROUP_DINGTALK = "dingtalk";
+    public static final String GROUP_VISION = "vision";
+    public static final String GROUP_IMAGE_EMBEDDING = "image_embedding";
 
     private record GroupDef(String code, String title, String description, List<FieldDef> fields) {
     }
@@ -37,15 +41,6 @@ public class SettingService {
     private static final Map<String, GroupDef> GROUPS = new LinkedHashMap<>();
 
     static {
-        GROUPS.put(GROUP_ANYTHINGLLM, new GroupDef(GROUP_ANYTHINGLLM, "AnythingLLM 连接",
-                "文档仓与向量检索内核。密钥只保存在服务端，接口只回显掩码。",
-                List.of(
-                        new FieldDef("baseUrl", "服务地址", false,
-                                "本项目专用内核容器默认 http://127.0.0.1:3002，见 deploy\\start-kernel.ps1",
-                                "http://127.0.0.1:3002"),
-                        new FieldDef("apiKey", "Developer API Key", true,
-                                "AnythingLLM → 设置 → 工具 → 开发者 API（生成后仅显示一次）", ""))));
-
         GROUPS.put(GROUP_EMBEDDING, new GroupDef(GROUP_EMBEDDING, "向量化 Embedding",
                 "决定“能不能凭意思检索到”。一旦入库就必须保持一致，更换需全量重建索引。",
                 List.of(
@@ -81,6 +76,8 @@ public class SettingService {
                 List.of(
                         new FieldDef("sourceRoot", "文档根目录", false,
                                 "绝对路径，或相对后端工作目录（项目根）的路径", "knowledge"),
+                        new FieldDef("assetRoot", "图片资产目录", false,
+                                "「找图」抽取/上传的图片落盘位置（内容寻址）。不得位于文档根目录之内", "knowledge-assets"),
                         new FieldDef("contextual", "片段上下文增强", false,
                                 "用生成模型给每个片段补一句上下文后再向量化（P1）。默认关闭；"
                                         + "开启后需重建片段（POST /ingest/reindex）才生效", "false"))));
@@ -110,27 +107,79 @@ public class SettingService {
                                 ""),
                         new FieldDef("apiKey", "API Key", true,
                                 "本地部署可留空；云端按服务商要求填写", ""))));
+
+        GROUPS.put(GROUP_DINGTALK, new GroupDef(GROUP_DINGTALK, "钉钉（组织同步与登录）",
+                "接入钉钉作为身份源：同步组织通讯录，并支持钉钉内免登。默认关闭；凭据留空即不启用。",
+                List.of(
+                        new FieldDef("enabled", "启用钉钉", false,
+                                "填 true 且填好 appKey/appSecret 才生效；否则登录入口不显示、同步接口直接报未配置",
+                                "false"),
+                        new FieldDef("appKey", "AppKey", false,
+                                "钉钉开放平台应用凭据。非密钥字段，便于清空重填", ""),
+                        new FieldDef("appSecret", "AppSecret", true,
+                                "钉钉开放平台应用密钥；只保存在服务端，接口只回显掩码", ""),
+                        new FieldDef("corpId", "企业 CorpId", false,
+                                "钉钉内免登（dd.config）需要", ""),
+                        new FieldDef("agentId", "应用 AgentId", false,
+                                "钉钉内免登（dd.config）需要", ""),
+                        new FieldDef("rootDeptId", "同步起始部门 ID", false,
+                                "从哪个部门开始递归同步，根部门固定为 1", "1"),
+                        new FieldDef("defaultRole", "同步用户默认角色", false,
+                                "组织同步进来的账号默认角色（永不为 admin，填 admin 会被降为 ops）", "ops"))));
+
+        GROUPS.put(GROUP_VISION, new GroupDef(GROUP_VISION, "图片理解 Vision（可选）",
+                "「找图」用：把图片交给视觉模型生成描述与图内文字，再据此建索引。"
+                        + "默认关闭；关闭时不抽取、不描述图片（图片资产整条流水线跳过）。",
+                List.of(
+                        new FieldDef("enabled", "启用图片理解", false,
+                                "填 true 且配好地址/Key/模型才生效", "false"),
+                        new FieldDef("baseUrl", "接口地址", false,
+                                "兼容 OpenAI 的 /chat/completions，且支持图片输入（如 Qwen-VL、GPT-4o）", ""),
+                        new FieldDef("apiKey", "API Key", true,
+                                "服务商控制台申请；只保存在服务端", ""),
+                        new FieldDef("model", "模型名", false,
+                                "必须是支持图片输入的模型，如 qwen-vl-max / gpt-4o", ""))));
+
+        GROUPS.put(GROUP_IMAGE_EMBEDDING, new GroupDef(GROUP_IMAGE_EMBEDDING, "图片视觉向量（可选）",
+                "「找图」的跨模态召回：用多模态模型把图片与查询文本编码进同一空间，"
+                        + "补上「只靠文字描述」搜不到的纯视觉特征。默认关闭。",
+                List.of(
+                        new FieldDef("enabled", "启用视觉向量", false,
+                                "填 true 且填好 API Key 与模型名才生效", "false"),
+                        new FieldDef("baseUrl", "接口地址", false,
+                                "阿里云百炼多模态 embedding 端点；留空用默认（北京地域）",
+                                "https://dashscope.aliyuncs.com/api/v1/services/embeddings/multimodal-embedding/multimodal-embedding"),
+                        new FieldDef("apiKey", "API Key", true, "百炼控制台申请；只保存在服务端", ""),
+                        new FieldDef("model", "模型名", false,
+                                "多模态向量模型，默认 qwen2.5-vl-embedding（1024 维，与库内固定维度一致）",
+                                "qwen2.5-vl-embedding"))));
     }
 
     private final SettingRepository repository;
-    private final KernelGateway kernelGateway;
     private final EmbeddingProbeClient embeddingProbeClient;
     private final OpenAiCompatibleClient openAiCompatibleClient;
     private final RerankClient rerankClient;
     private final LayoutClient layoutClient;
+    private final DingTalkClient dingTalkClient;
+    private final OpenAiCompatibleVisionClient visionClient;
+    private final DashScopeMultimodalEmbedder imageEmbedderClient;
 
     public SettingService(SettingRepository repository,
-                          KernelGateway kernelGateway,
                           EmbeddingProbeClient embeddingProbeClient,
                           OpenAiCompatibleClient openAiCompatibleClient,
                           RerankClient rerankClient,
-                          LayoutClient layoutClient) {
+                          LayoutClient layoutClient,
+                          DingTalkClient dingTalkClient,
+                          OpenAiCompatibleVisionClient visionClient,
+                          DashScopeMultimodalEmbedder imageEmbedderClient) {
         this.repository = repository;
-        this.kernelGateway = kernelGateway;
         this.embeddingProbeClient = embeddingProbeClient;
         this.openAiCompatibleClient = openAiCompatibleClient;
         this.rerankClient = rerankClient;
         this.layoutClient = layoutClient;
+        this.dingTalkClient = dingTalkClient;
+        this.visionClient = visionClient;
+        this.imageEmbedderClient = imageEmbedderClient;
     }
 
     public List<GroupView> list() {
@@ -165,12 +214,14 @@ public class SettingService {
     public TestResult test(String code) {
         Map<String, String> cfg = effective(require(code));
         return switch (code) {
-            case GROUP_ANYTHINGLLM -> kernelGateway.probe(cfg);
-            case GROUP_EMBEDDING -> embeddingProbeClient.probeEmbedding(cfg);
+                case GROUP_EMBEDDING -> embeddingProbeClient.probeEmbedding(cfg);
             case GROUP_LLM -> openAiCompatibleClient.probeChat(cfg);
             case GROUP_RERANK -> rerankClient.probe(cfg);
-            case GROUP_LAYOUT -> layoutClient.probe(cfg);
-            case GROUP_INGEST -> probeIngestRoot(cfg);
+                case GROUP_LAYOUT -> layoutClient.probe(cfg);
+                case GROUP_DINGTALK -> dingTalkClient.probe(cfg);
+                case GROUP_VISION -> visionClient.probe(cfg);
+                case GROUP_IMAGE_EMBEDDING -> imageEmbedderClient.probe(cfg);
+                case GROUP_INGEST -> probeIngestRoot(cfg);
             default -> new TestResult(false, "未知配置分组：" + code, null);
         };
     }

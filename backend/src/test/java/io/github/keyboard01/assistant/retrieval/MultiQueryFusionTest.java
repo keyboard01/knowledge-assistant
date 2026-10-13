@@ -72,6 +72,6 @@ class MultiQueryFusionTest {
 
     private static ChunkRow row(long chunkId, double score) {
         return new ChunkRow(chunkId, 1L, 0, "正文" + chunkId, null, null, null, "PARAGRAPH",
-                "D-" + chunkId, "标题", "V1.0", "现行", "内部公开", "财务部", "D.pdf", score);
+                "D-" + chunkId, "标题", "V1.0", "现行", "内部公开", "财务部", score);
     }
 }

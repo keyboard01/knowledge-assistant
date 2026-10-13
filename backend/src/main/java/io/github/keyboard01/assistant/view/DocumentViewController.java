@@ -80,6 +80,13 @@ public class DocumentViewController {
         return Map.of("error", ex.getMessage());
     }
 
+    /** 图片文档走错了入口：给它一个可读的 400，而不是让 PDFBox 去解析 PNG 炸成 500。 */
+    @ExceptionHandler(IllegalArgumentException.class)
+    @ResponseStatus(HttpStatus.BAD_REQUEST)
+    public Map<String, String> onBadRequest(IllegalArgumentException ex) {
+        return Map.of("error", ex.getMessage() == null ? "请求不合法" : ex.getMessage());
+    }
+
     @ExceptionHandler(IllegalStateException.class)
     @ResponseStatus(HttpStatus.INTERNAL_SERVER_ERROR)
     public Map<String, String> onFailure(IllegalStateException ex) {

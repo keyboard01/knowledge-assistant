@@ -15,12 +15,14 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
+import io.github.keyboard01.assistant.domain.DomainService;
 import io.github.keyboard01.assistant.ingest.DocumentRepository;
 import io.github.keyboard01.assistant.ingest.IngestService;
 import io.github.keyboard01.assistant.security.AccessFilter;
 import io.github.keyboard01.assistant.security.AppUser;
 import io.github.keyboard01.assistant.security.CurrentUser;
 import io.github.keyboard01.assistant.security.DocumentAclRepository;
+import io.github.keyboard01.assistant.security.DocumentVisibility;
 import io.github.keyboard01.assistant.view.DocumentViewModels.Block;
 import io.github.keyboard01.assistant.view.DocumentViewModels.Channel;
 import io.github.keyboard01.assistant.view.DocumentViewModels.ContentView;
@@ -51,6 +53,7 @@ public class DocumentViewService {
     private final ViewChunkRepository chunks;
     private final ViewLogRepository viewLog;
     private final IngestService ingest;
+    private final DomainService domainService;
 
     /**
      * DOCX 重排结果的缓存。**只缓存未盖章的字节**——盖章后的成品带着某个账号的水印，
@@ -65,12 +68,14 @@ public class DocumentViewService {
             });
 
     public DocumentViewService(DocumentRepository documents, DocumentAclRepository acls,
-                               ViewChunkRepository chunks, ViewLogRepository viewLog, IngestService ingest) {
+                               ViewChunkRepository chunks, ViewLogRepository viewLog, IngestService ingest,
+                               DomainService domainService) {
         this.documents = documents;
         this.acls = acls;
         this.chunks = chunks;
         this.viewLog = viewLog;
         this.ingest = ingest;
+        this.domainService = domainService;
     }
 
     /** 下载/预览用的 PDF 字节与建议文件名。 */
@@ -134,8 +139,8 @@ public class DocumentViewService {
     }
 
     /**
-     * DOCX 先重排成 PDF 再盖章。缓存键带上 contentHash：文件内容变了就是另一次转换，
-     * 用旧的排版会把新内容藏起来。
+     * 非 PDF 的文本文档（DOCX、PPTX…）先按片段重排成 PDF 再盖章。缓存键带上 contentHash：
+     * 文件内容变了就是另一次转换，用旧的排版会把新内容藏起来。
      */
     private byte[] converted(DocumentRepository.Row row) {
         String key = row.id() + ":" + row.contentHash();
@@ -192,14 +197,16 @@ public class DocumentViewService {
         return marked;
     }
 
+    /**
+     * 只有真正的 PDF 才走「源文件字节 + 盖章」。
+     *
+     * <p>必须按扩展名/MIME 正向判定：反过来写成「不是 DOCX 就当 PDF」，会让 PPTX 这类同样走解析
+     * 入库的文本文档被塞给 PDFBox，抛 Header doesnt contain versioninfo（500）。</p>
+     */
     private boolean isPdf(DocumentRepository.Row row) {
-        return !isDocx(row);
-    }
-
-    private static boolean isDocx(DocumentRepository.Row row) {
         String path = row.sourcePath() == null ? "" : row.sourcePath().toLowerCase(java.util.Locale.ROOT);
         String mime = row.mimeType() == null ? "" : row.mimeType().toLowerCase(java.util.Locale.ROOT);
-        return path.endsWith(".docx") || mime.contains("wordprocessingml");
+        return path.endsWith(".pdf") || mime.contains("application/pdf");
     }
 
     private static String pdfName(DocumentRepository.Row row) {
@@ -211,12 +218,19 @@ public class DocumentViewService {
         return (base.isEmpty() ? "document" : base.replaceAll("[\\r\\n\"\\\\/]", "_")) + ".pdf";
     }
 
-    /** 判定 + 留痕。没通过就抛 {@link DocumentAccessDeniedException}，且已经写过一行 DENIED。 */
+    /**
+     * 判定 + 留痕。没通过就抛 {@link DocumentAccessDeniedException}，且已经写过一行 DENIED。
+     *
+     * <p>图片文档不能走「原文/正文/下载」三个入口：它们是按 PDF/DOCX 处理的
+     * （`sourceBytes` 会对 PNG 调 `PDDocument.load` 打水印 → 500）。这里挡下并给可读的 400。</p>
+     */
     private Viewer authorize(long documentId, Channel channel, String clientIp) {
         AppUser user = CurrentUser.require();
         String watermark = watermarkOf(user.username());
         DocumentRepository.Row row = documents.findById(documentId).orElse(null);
         boolean allowed = row != null
+                && domainService.canAccess(user.subject(), row.domainCode())
+                && DocumentVisibility.isCurrent(row.docStatus())
                 && AccessFilter.of(user.subject(), AccessFilter.DEFAULT_ALIAS)
                         .allows(acls.findByDocumentIds(List.of(documentId)).get(documentId));
         if (!allowed) {
@@ -230,9 +244,20 @@ public class DocumentViewService {
             }
             throw new DocumentAccessDeniedException();
         }
+        if (channel != Channel.IMAGE && "image".equalsIgnoreCase(row.kind())) {
+            throw new IllegalArgumentException("图片文档请在「找图」中查看");
+        }
         viewLog.record(row.id(), row.docNo(), row.version(), user.username(), user.roleCode(), channel, "OK",
                 watermark, clientIp);
         return new Viewer(row, watermark);
+    }
+
+    /**
+     * 供「找图」等服务复用：按文档复核权限并留痕（{@code Channel.IMAGE}），返回文档行。
+     * 权限口径与查看原文完全一致——不另立一条路径。
+     */
+    public DocumentRepository.Row assertVisible(long documentId, Channel channel, String clientIp) {
+        return authorize(documentId, channel, clientIp).row();
     }
 
     private record Viewer(DocumentRepository.Row row, String watermark) {

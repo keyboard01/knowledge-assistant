@@ -179,7 +179,7 @@ class AnswerComposerTest {
 
     private static Evidence evidence(int rank, String docNo, String version) {
         return new Evidence(rank, rank, docNo, docNo + " 的标题", version, "现行", "内部公开", "财务部",
-                docNo + "_" + version + ".pdf", 0.8,
+                0.8,
                 List.of(new Evidence.Fragment("chunk-" + rank, "片段正文 " + rank, 0.8, 0.2, 12)));
     }
 

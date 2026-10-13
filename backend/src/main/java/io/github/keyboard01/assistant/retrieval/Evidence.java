@@ -9,7 +9,7 @@ import java.util.List;
  * 引用才能指回具体位置。</p>
  */
 public record Evidence(int rank, long documentId, String docNo, String title, String version, String docStatus,
-                       String secrecy, String ownerDept, String kernelDocName, double bestScore,
+                       String secrecy, String ownerDept, double bestScore,
                        List<Fragment> fragments) {
 
     /**

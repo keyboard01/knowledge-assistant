@@ -25,10 +25,12 @@ public class AuthService {
     private static final Logger log = LoggerFactory.getLogger(AuthService.class);
     private static final String BAD_CREDENTIALS = "用户名或密码不正确";
 
-    public record UserView(long id, String username, String displayName, String roleCode, String deptCode) {
+    public record UserView(long id, String username, String displayName, String roleCode, String deptCode,
+                           boolean enabled) {
 
         public static UserView of(AppUser user) {
-            return new UserView(user.id(), user.username(), user.displayName(), user.roleCode(), user.deptCode());
+            return new UserView(user.id(), user.username(), user.displayName(), user.roleCode(), user.deptCode(),
+                    user.enabled());
         }
     }
 
@@ -62,6 +64,14 @@ public class AuthService {
         }
 
         AppUser user = found.get();
+        return issueSession(user);
+    }
+
+    /**
+     * 签发会话。登录与钉钉 SSO 共用——两处都必须做"清理过期会话 + 更新最近登录时间"，
+     * 抽出来就不会出现某条登录路径漏掉其中一步。
+     */
+    public LoginResult issueSession(AppUser user) {
         sessions.deleteExpired();
         String token = SessionToken.newToken();
         Instant expiresAt = Instant.now().plus(SESSION_TTL);
