@@ -13,19 +13,34 @@ if (-not $pwsh) { $pwsh = 'powershell' }
 
 if (-not (Test-Path -LiteralPath $logs)) { New-Item -ItemType Directory -Path $logs | Out-Null }
 
-if (Test-Path -LiteralPath $pidFile) {
-    $old = (Get-Content -LiteralPath $pidFile -Raw).Trim()
-    if ($old -and (Get-Process -Id ([int]$old) -ErrorAction SilentlyContinue)) {
-        Stop-Process -Id ([int]$old) -Force
-        Start-Sleep -Seconds 1
-    }
+# pid 文件可能过期，pid 也可能被系统复用给别的进程。这里只认"还活着、且确实是 JVM"的那一个，
+# 认不出来就当它不存在——误杀一个不认识的 pid，代价比留一个僵尸后端大得多。
+function Get-RecordedBackend {
+    if (-not (Test-Path -LiteralPath $pidFile)) { return $null }
+    $raw = Get-Content -LiteralPath $pidFile -Raw -ErrorAction SilentlyContinue
+    if (-not $raw) { return $null }
+    $recordedPid = 0
+    if (-not [int]::TryParse($raw.Trim(), [ref]$recordedPid)) { return $null }
+    $proc = Get-Process -Id $recordedPid -ErrorAction SilentlyContinue
+    if (-not $proc) { return $null }
+    if ($proc.ProcessName -ne 'java') { return $null }
+    return $proc
 }
 
-Start-Process -FilePath $pwsh `
+$old = Get-RecordedBackend
+if ($old) {
+    Stop-Process -Id $old.Id -Force
+    Write-Host "已停止旧后端进程 pid=$($old.Id)" -ForegroundColor DarkGray
+    Start-Sleep -Seconds 1
+}
+Remove-Item -LiteralPath $pidFile -Force -ErrorAction SilentlyContinue
+
+$launcher = Start-Process -FilePath $pwsh `
     -ArgumentList '-NoLogo', '-NoProfile', '-File', (Join-Path $PSScriptRoot 'start-backend.ps1') `
     -WindowStyle Hidden `
     -RedirectStandardOutput (Join-Path $logs 'app.log') `
-    -RedirectStandardError (Join-Path $logs 'app.err.log')
+    -RedirectStandardError (Join-Path $logs 'app.err.log') `
+    -PassThru
 
 # 探活必须带令牌：T06 起 /api/** 默认拒绝，selfcheck 也不再是匿名接口。
 # 用「登录 + selfcheck」作为一个整体探针，一次判出"进程活着"和"业务可用"两件事。
@@ -41,9 +56,22 @@ if (-not $adminPassword) {
     exit 1
 }
 
+# 用真正的墙钟截止时间，而不是"轮询次数 × 间隔"：
+# 慢失败（连接超时）时每次轮询要耗好几秒，按次数算能把 60 秒拖成好几分钟，看着就是卡死。
+$deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+$nextNotice = (Get-Date).AddSeconds(5)
 $check = $null
-for ($i = 0; $i -lt $TimeoutSeconds * 2; $i++) {
+while ((Get-Date) -lt $deadline) {
     Start-Sleep -Milliseconds 500
+
+    # 启动器已经退出 = JVM 根本没起来（瘦 jar、端口被占、配置错），再等也没有意义
+    if ($launcher.HasExited) {
+        Write-Host "后端进程已退出（exit=$($launcher.ExitCode)），错误输出：" -ForegroundColor Red
+        Get-Content (Join-Path $logs 'app.err.log') -Tail 30 -ErrorAction SilentlyContinue
+        Get-Content (Join-Path $logs 'app.log') -Tail 20 -ErrorAction SilentlyContinue
+        exit 1
+    }
+
     try {
         $token = (Invoke-RestMethod 'http://127.0.0.1:9090/api/auth/login' -Method Post `
             -ContentType 'application/json' -TimeoutSec 5 `
@@ -52,7 +80,15 @@ for ($i = 0; $i -lt $TimeoutSeconds * 2; $i++) {
             -Headers @{ Authorization = "Bearer $token" }
         break
     } catch { }
+
+    # 别静默等待：JVM 冷启动要十几秒，没有进度输出时最像"卡住"
+    if ((Get-Date) -ge $nextNotice) {
+        $left = [int]($deadline - (Get-Date)).TotalSeconds
+        Write-Host "等待后端就绪…（剩余 ${left}s，日志 backend\logs\app.log）" -ForegroundColor DarkGray
+        $nextNotice = (Get-Date).AddSeconds(5)
+    }
 }
+
 if (-not $check) {
     Write-Host "后端未在 $TimeoutSeconds 秒内就绪，错误输出：" -ForegroundColor Red
     Get-Content (Join-Path $logs 'app.err.log') -Tail 30 -ErrorAction SilentlyContinue
@@ -60,9 +96,22 @@ if (-not $check) {
     exit 1
 }
 
-$java = Get-Process java -ErrorAction SilentlyContinue | Sort-Object StartTime -Descending | Select-Object -First 1
-if ($java) { Set-Content -LiteralPath $pidFile -Value $java.Id -Encoding ascii }
+# pid 由 start-backend.ps1 在拉起 JVM 时写入，这里只做校验与兜底重读
+$backend = $null
+for ($i = 0; $i -lt 25 -and -not $backend; $i++) {
+    $backend = Get-RecordedBackend
+    if (-not $backend) { Start-Sleep -Milliseconds 200 }
+}
 
-Write-Host "后端已就绪（pid=$($java.Id)），日志：backend\logs\app.log" -ForegroundColor Cyan
+Write-Host "后端已就绪（pid=$($backend.Id)），日志：backend\logs\app.log" -ForegroundColor Cyan
 Write-Host '--- GET /api/domains/selfcheck ---'
 $check | ConvertTo-Json -Depth 6
+
+# 进程起来 ≠ 业务可用：检索链路 / 向量化配置这类自检项失败时 ok=false。
+# 这时不能返回 0，否则一键启动会假装成功，问题被拖到第一次提问才暴露。
+if ($check.PSObject.Properties.Name -contains 'ok' -and -not $check.ok) {
+    Write-Warning '后端进程已启动，但自检未全部通过（详见上面 JSON 与日志）。'
+    exit 2
+}
+
+exit 0
