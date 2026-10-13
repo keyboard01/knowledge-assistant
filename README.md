@@ -5,7 +5,6 @@
 - 后端：Spring Boot 3.5（Java 17）
 - 前端：Vue 3 + Vite
 - 存储：PostgreSQL 17 + pgvector（元数据 / 权限 / 片段与向量 / 运行账本）
-- 知识内核：AnythingLLM（可选，文档仓与对照检索通道）
 - 部署形态：单机、单租户，全部监听 `127.0.0.1`
 
 ---
@@ -15,13 +14,19 @@
 | 能力 | 说明 |
 |---|---|
 | 混合检索 | 向量召回（pgvector HNSW）+ 关键词召回（pg_trgm），RRF 融合 |
-| 权限下推 | 文档级 ACL 在 SQL 层过滤（fail-closed），不可见内容根本不进候选 |
+| 权限下推 | **两级**：工作区（域）级授权 + 文档级 ACL，都在 SQL 层过滤（fail-closed），不可见内容根本不进候选 |
+| 状态闸门 | 只有"现行"文档参与检索与查看；草案 / 已废止既不进证据、也打不开原文 |
 | 引用校验 | 每条结论带引用编号，越界/截断按拒答处理，不返回半句话 |
 | 拒答闸门 | 双阈值判定"证据是否足够"，不足时不调用模型 |
 | 深度分析 | 问题拆解 → 多轮检索 → 分步作答（可选） |
 | 重排（P0） | 可选 cross-encoder 重排层，默认关闭 |
 | 查询改写 / 上下文增强 / 版面分析（P1） | 均为可选、默认关闭 |
-| 管理能力 | 知识域增删改、浏览器上传文档、文档版本状态切换 |
+| 管理端 / 用户端分离 | 两个独立入口：用户门户 `/`、管理控制台 `/admin.html` |
+| 用户与权限 | 建号 / 改角色 / 停用 / 重置密码；域级授权（谁能看哪个知识域）；禁止停用最后一个管理员 |
+| 文档接入 | 支持 PDF / DOCX / PPTX / 图片；管理员上传 / 目录同步；普通用户可在门户提交，落"草案"待审核 |
+| 找图（多模态检索） | 把文档内嵌图与直接上传的图片建成素材库；用一句描述检索（视觉模型生成描述与图内文字按文本召回；可选多模态向量做跨模态召回） |
+| 对外接入 | API Key（绑定账号、复用权限）+ MCP server（`POST /api/mcp`，3 个工具） |
+| 钉钉接入（可选） | 组织通讯录同步 + 钉钉内免登；配置留空即禁用 |
 | 运行账本 | 每次问答一行：命中片段、耗时、token、费用 |
 
 ---
@@ -60,27 +65,28 @@
 ## 三、架构与端口
 
 ```
-浏览器 (Vite 5173)
-   │  /api/**（Bearer 令牌，Vite 代理到后端）
+浏览器 (Vite 5173，两个入口)
+   │  /api/**（Bearer 会话令牌；外部系统用 API Key，Vite 代理到后端）
    ▼
 后端 (Spring Boot 127.0.0.1:9090)
-   ├─ security/  登录、会话、ACL
-   ├─ ingest/    目录扫描 / 上传、幂等同步、片段入库
-   ├─ parse/     PDF(PDFBox) / DOCX(POI) → 块 → chunk
-   ├─ retrieval/ 召回、RRF 融合、重排、证据组装、双阈值
+   ├─ security/   登录、会话、API Key、角色、域级+文档级 ACL、钉钉 SSO/组织同步
+   ├─ ingest/     目录扫描 / 上传（用户上传默认草案）、幂等同步、片段入库
+   ├─ parse/      PDF(PDFBox) / DOCX(POI) → 块 → chunk
+   ├─ retrieval/  召回、RRF 融合、重排、证据组装、双阈值
    ├─ generation/ 提示词、引用校验、拒答
-   └─ observe/   运行账本
+   ├─ mcp/        MCP Streamable HTTP（/api/mcp，复用上面的服务）
+   ├─ media/      找图：图片抽取 + 视觉描述 + 图片检索
+   └─ observe/    运行账本
    ▼
 PostgreSQL 17 + pgvector (127.0.0.1:5432)
-AnythingLLM 内核 (127.0.0.1:3002)（可选）
+钉钉开放平台 oapi.dingtalk.com（可选，出网）
 ```
 
 | 组件 | 形态 | 地址 |
 |---|---|---|
 | PostgreSQL + pgvector | Docker 容器 `assistant-pg` | `127.0.0.1:5432` |
-| 知识内核 AnythingLLM | Docker 容器 `assistant-anythingllm` | `127.0.0.1:3002` |
 | 后端 | 本机 JVM（可执行 jar） | `127.0.0.1:9090` |
-| 前端 | Vite | `127.0.0.1:5173` |
+| 前端 | Vite（用户门户 `/` · 管理控制台 `/admin.html`） | `127.0.0.1:5173` |
 
 > 端口 9090 而非 8080，是为了避开本机其它项目。
 
@@ -91,7 +97,7 @@ AnythingLLM 内核 (127.0.0.1:3002)（可选）
 ```
 backend/     Spring Boot 后端（src/main/java/io/github/keyboard01/assistant/**）
 frontend/    Vue 3 前端
-deploy/      启动脚本、.env.example、内核启动脚本
+deploy/      启动脚本、.env.example
 docs/        架构说明 / 接口契约 / 部署与启动
 tools/       验收脚本（PowerShell / Playwright）、测试语料生成
 knowledge/   文档根目录（manifest.json + 各知识域子目录）
@@ -105,7 +111,7 @@ knowledge/   文档根目录（manifest.json + 各知识域子目录）
 - **JDK 17**（后端要求；本机若默认是 Java 8，务必按下面方式指定）
 - **Maven 3.9+**（离线可用，依赖已锁版本）
 - **Node.js 18+**（前端）
-- **Docker Desktop**（跑 PostgreSQL 与内核容器）
+- **Docker Desktop**（跑 PostgreSQL 容器）
 - 一个**兼容 OpenAI 协议**的向量化模型 + 生成模型的接口地址与 Key（在系统配置页填写）
 
 ---
@@ -125,7 +131,6 @@ copy deploy\.env.example deploy\.env
 PG_PASSWORD=<给数据库设一个密码>
 ASSISTANT_ADMIN_PASSWORD=<管理员初始密码，至少 8 位>
 ASSISTANT_DEMO_PASSWORD=<演示账号密码，可留空>
-ANYTHINGLLM_API_KEY=<AnythingLLM 开发者 API Key，不用内核可留空>
 ```
 
 
@@ -135,10 +140,9 @@ ANYTHINGLLM_API_KEY=<AnythingLLM 开发者 API Key，不用内核可留空>
 
 1. 切换到 JDK 17（找不到会明确报错）
 2. 起数据库容器 `assistant-pg`（不存在则创建）
-3. 起内核容器 `assistant-anythingllm`（仅当未运行；首次需要先在配置页填过模型配置）
-4. 缺 jar 时执行 `mvn -o -B package`
-5. 起后端并等到就绪（打印内核自检）
-6. 新窗口起前端，并打开浏览器
+3. 缺 jar（或产物不可执行）时执行 `mvn -o -B package`
+4. 起后端并等到就绪
+5. 新窗口起前端，并打开浏览器
 
 停止：双击 **`停止.bat`**（停后端与前端，容器保留）。
 
@@ -168,10 +172,11 @@ npm run dev        # http://127.0.0.1:5173
 
 ## 七、首次使用
 
-浏览器打开 `http://127.0.0.1:5173`，用 `deploy\.env` 里的 `admin` 账号登录。
+浏览器打开 `http://127.0.0.1:5173`（**用户门户**）或 `http://127.0.0.1:5173/admin.html`（**管理控制台**），
+用 `deploy\.env` 里的 `admin` 账号登录。管理相关操作都在控制台里。
 
 1. **配置模型**：进入「系统配置」，填「向量化 Embedding」与「生成模型出口」两组的**接口地址、模型名、API Key**（都是兼容 OpenAI 协议的地址），点「测试连接」确认可用。
-2. **建知识域**：「知识域与内核」→「新建知识域」（代码用英文小写），保存后点「初始化工作区」把内核工作区建出来。
+2. **建知识域**：「知识域管理」→「新建知识域」（代码用英文小写）。
 3. **入库文档**（二选一）：
    - 「文档与同步」→「上传文档」，填编号/标题/版本等并选文件；
    - 或把文件放进 `knowledge/<域>/` 并在 `knowledge/manifest.json` 登记，再点「立即同步」。
@@ -186,11 +191,11 @@ npm run dev        # http://127.0.0.1:5173
 |---|---|
 | 文档元数据、ACL、自建片段与向量、运行账本、配置与密钥、会话 | PostgreSQL（Docker 卷 `assistant_pg_data`） |
 | 原始文档 + `manifest.json` | 项目内 `knowledge/` |
-| 内核工作区、上传副本、内核向量库 | 内核容器挂载目录（默认 `D:\DockerData\AnythingLLM-assistant`） |
+| 图片资产 | 项目内 `knowledge-assets/`（内容寻址） |
 | 后端日志 | `backend/logs/`（不入库） |
 | 敏感配置 | `deploy/.env`（不入库） |
 
-备份需同时带走：PG 卷 + `knowledge/` + 内核挂载目录 + `deploy/.env`。
+备份需同时带走：PG 卷 + `knowledge/` + `knowledge-assets/` + `deploy/.env`。
 
 ---
 
@@ -213,8 +218,7 @@ pwsh tools\run-acceptance.ps1 -SkipSlow
 | 启动报 `UnsupportedClassVersionError` | 用了 Java 8；把 `JAVA_HOME` 切到 JDK 17 |
 | 编译报一堆"非法字符" | 同上，用的是 Java 8，不支持文本块 |
 | 问答报 503 | 生成模型出口不可用（Key/地址/出网被拦），不是"库里没有" |
-| 检索报 503 | 内核容器没起；或 `retrieval.mode` 配置问题 |
-| 上传 200 但检索不到 | 内核会把嵌入失败吞掉仍返回 200；看日志与向量数增量 |
+| 检索报 503 | 向量化服务不可用（embedding 地址/Key/出网被拦） |
 
 ---
 
@@ -236,7 +240,7 @@ pwsh tools\run-acceptance.ps1 -SkipSlow
 
 | 类别 | 现状 | 影响 |
 |---|---|---|
-| **图片 / 图表** | 不抽取图片内容，也不做图文问答；仅当图片附近有文字题注时，题注作为普通文本入库 | 图里的信息检索不到，纯图形内容等于不存在 |
+| **图片 / 图表** | 已支持**找图**：从 PDF / DOCX / PPTX 抽取内嵌图、也可直接上传图片，用视觉模型生成描述与图内文字后按文本检索。但仍**不做图文问答**，也不把图片混进问答证据 | 默认不建跨模态向量（需另开「图片视觉向量」），纯视觉特征可能搜不到；问答依旧只依据文字证据 |
 | **扫描件（无文字层的 PDF）** | **无 OCR**。只有图片、没有文字层的 PDF 解析结果为空 | 整份文件无法检索；入库时会因"解析结果为空"被拒绝并报错 |
 | **复杂 PDF 表格** | 内置 PDFBox 解析为启发式，恢复不出"表头—单元格"关系，单元格直接拼接；跨页表格可能丢行 | 表格类问题召回偏弱；需依赖可选的版面分析服务（Docling / MinerU / PP-StructureV3）改善 |
 | **复杂排版** | 双栏、跨页表格等内置解析为启发式，识别率无保证 | 同上，需外部版面分析服务 |
@@ -247,7 +251,14 @@ pwsh tools\run-acceptance.ps1 -SkipSlow
 - 单机、单租户，全部监听 `127.0.0.1`；不做多租户与分布式向量库。
 - 存储为 PostgreSQL + pgvector 单库；向量维度写死在 DDL，**换向量化模型需全量迁移**。
 - 文档**没有删除接口**，下线只能改状态（现行 / 已废止 / 草案）。
-- 知识内核（AnythingLLM）"收到文件"与"我们解析就绪"是两件事，分别记录状态。
+- 工作区授权只有"读"：可见即可上传，用户上传靠"默认草案 + 审核 + 覆盖守卫"兜底。
+- 对外 API Key 没有 scopes，权限完全等于绑定账号的角色/部门。
+- MCP 只提供 Streamable HTTP（`POST /api/mcp`），没有 stdio 传输。
+- 钉钉**未做真实联调**（本机无凭据、需出网），只验证到"留空即禁用 + 纯逻辑单测"；钉钉出站（发消息）尚未实现。
+- **找图需要配「图片理解」视觉模型**（系统配置 → 图片理解，默认关闭）；未配置时图片不抽取、不描述，文档仍正常入库。
+  仅开「图片理解」时靠文字描述检索；要命中纯视觉特征需再开「图片视觉向量」（多模态模型，如 `qwen2.5-vl-embedding`）。
+- **文档查看器不渲染内嵌图片**：查看 PDF / DOCX / PPTX 时只渲染正文文本，源文件里的示意图 / 照片 / 截图在查看页看不到；这些图片目前只进「找图」模块，按描述可搜、可看原图。
+- **文本文档支持 PDF / DOCX / PPTX**；旧 `.ppt` 不支持（离线无 `poi-scratchpad`）；PPT 生成未实现；扫描件（无文字层 PDF）仍无 OCR。
 - 面向中文语料优化，其它语种效果未验证。
 
 ---
