@@ -27,3 +27,6 @@ Thumbs.db
 
 # 前端构建缓存
 .vite/
+
+# 运行时图片资产（内容寻址，由「重建图片索引」可再生成）
+knowledge-assets/
