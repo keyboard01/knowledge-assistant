@@ -1,165 +1,93 @@
 {
-  "_comment" : "文档登记表。目录扫描只负责发现文件，元数据以本表为准；未登记的文件不会被入库（fail-closed）。file 为相对本文件所在目录的路径，一律用 / 分隔。",
-  "documents" : [ {
-    "file" : "制度流程/员工差旅与费用报销管理办法_V3.2_现行.pdf",
-    "domainCode" : "policy",
-    "docNo" : "QM-ZD-2026-003",
-    "title" : "员工差旅与费用报销管理办法",
-    "version" : "V3.2",
-    "docStatus" : "现行",
-    "secrecy" : "内部公开",
-    "ownerDept" : "财务部",
-    "effectiveFrom" : "2026-01-01"
-  }, {
-    "file" : "制度流程/员工差旅与费用报销管理办法_V2.8_已废止.pdf",
-    "domainCode" : "policy",
-    "docNo" : "QM-ZD-2026-003",
-    "title" : "员工差旅与费用报销管理办法",
-    "version" : "V2.8",
-    "docStatus" : "已废止",
-    "secrecy" : "内部公开",
-    "ownerDept" : "财务部",
-    "effectiveFrom" : "2024-06-01",
-    "effectiveTo" : "2025-12-31"
-  }, {
-    "file" : "制度流程/设备停机与故障上报管理规定_V1.4.pdf",
-    "domainCode" : "policy",
-    "docNo" : "QM-ZD-2026-011",
-    "title" : "设备停机与故障上报管理规定",
-    "version" : "V1.4",
-    "docStatus" : "现行",
-    "secrecy" : "内部公开",
-    "ownerDept" : "设备动力部",
-    "effectiveFrom" : "2025-09-01"
-  }, {
-    "file" : "制度流程/2026年度薪酬结构调整方案_草案.pdf",
-    "domainCode" : "policy",
-    "docNo" : "QM-ZD-2026-021",
-    "title" : "2026 年度薪酬结构调整方案",
-    "version" : "V0.9",
-    "docStatus" : "草案·未生效",
-    "secrecy" : "秘密",
-    "ownerDept" : "人力资源部"
-  }, {
-    "file" : "技术文档/CNC-850立式加工中心技术规格书_V2.0.pdf",
-    "domainCode" : "tech",
-    "docNo" : "QM-JS-CNC850-2025",
-    "title" : "CNC-850 立式加工中心技术规格书",
-    "version" : "V2.0",
-    "docStatus" : "现行",
-    "secrecy" : "内部公开",
-    "ownerDept" : "工艺技术部",
-    "effectiveFrom" : "2025-03-01"
-  }, {
-    "file" : "技术文档/液压站HYZ-40原理与维护说明_V1.1.docx",
-    "domainCode" : "tech",
-    "docNo" : "QM-JS-HYZ40-2026",
-    "title" : "液压站 HYZ-40 原理与维护说明",
-    "version" : "V1.1",
-    "docStatus" : "现行",
-    "secrecy" : "内部公开",
-    "ownerDept" : "工艺技术部",
-    "effectiveFrom" : "2026-04-01"
-  }, {
-    "file" : "维修/CNC-850常见故障排查手册_V1.3.pdf",
-    "domainCode" : "repair",
-    "docNo" : "QM-WX-CNC850-2026",
-    "title" : "CNC-850 常见故障排查手册",
-    "version" : "V1.3",
-    "docStatus" : "现行",
-    "secrecy" : "内部公开",
-    "ownerDept" : "设备维修部",
-    "effectiveFrom" : "2026-02-01"
-  }, {
-    "file" : "维修/空压机GA-75定期保养作业指导书_V1.0.pdf",
-    "domainCode" : "repair",
-    "docNo" : "QM-WX-GA75-2026",
-    "title" : "空压机 GA-75 定期保养作业指导书",
-    "version" : "V1.0",
-    "docStatus" : "现行",
-    "secrecy" : "内部公开",
-    "ownerDept" : "设备维修部",
-    "effectiveFrom" : "2026-05-01"
-  }, {
-    "file" : "OA流程/公司采购管理流程_V1.0.pdf",
-    "domainCode" : "oa",
-    "docNo" : "QM-OA-2026-001",
-    "title" : "公司采购管理流程",
-    "version" : "V1.0",
-    "docStatus" : "现行",
-    "secrecy" : "内部公开",
-    "ownerDept" : "采购部",
-    "effectiveFrom" : "2026-01-01"
-  }, {
-    "file" : "OA流程/费用报销管理流程_V1.0.pdf",
-    "domainCode" : "oa",
-    "docNo" : "QM-OA-2026-002",
-    "title" : "费用报销管理流程",
-    "version" : "V1.0",
-    "docStatus" : "现行",
-    "secrecy" : "内部公开",
-    "ownerDept" : "财务部",
-    "effectiveFrom" : "2026-01-01"
-  }, {
-    "file" : "OA流程/OA审批流程配置说明_V1.0.pdf",
-    "domainCode" : "oa",
-    "docNo" : "QM-OA-2026-003",
-    "title" : "OA 审批流程配置说明",
-    "version" : "V1.0",
-    "docStatus" : "现行",
-    "secrecy" : "内部公开",
-    "ownerDept" : "信息部",
-    "effectiveFrom" : "2026-01-01"
-  }, {
-    "file" : "oa/QM-ZD-OA-2026-10-10-001_V1.0.pdf",
-    "domainCode" : "oa",
-    "docNo" : "QM-ZD-OA-2026-10-10-001",
-    "title" : "OA审批流程配置说明",
-    "version" : "V1.0",
-    "docStatus" : "现行",
-    "secrecy" : "内部公开"
-  }, {
-    "file" : "oa/QM-OA-2026-10-10-002_V1.0.pdf",
-    "domainCode" : "oa",
-    "docNo" : "QM-OA-2026-10-10-002",
-    "title" : "公司采购管理流程",
-    "version" : "V1.0",
-    "docStatus" : "现行",
-    "secrecy" : "内部公开"
-  }, {
-    "file" : "oa/QM-OA-2026-10-10-003_V1.0.pdf",
-    "domainCode" : "oa",
-    "docNo" : "QM-OA-2026-10-10-003",
-    "title" : "费用报销管理流程",
-    "version" : "V1.0",
-    "docStatus" : "现行",
-    "secrecy" : "内部公开"
-  }, {
-    "file" : "tech/QM-JS-DJ-2026-001_V1.0.pptx",
-    "domainCode" : "tech",
-    "docNo" : "QM-JS-DJ-2026-001",
-    "title" : "CNC-850 立式加工中心点检图示",
-    "version" : "V1.0",
-    "docStatus" : "现行",
-    "secrecy" : "内部公开",
-    "ownerDept" : "设备动力部"
-  }, {
-    "file" : "repair/QM-WX-KYJ-2026-002_V1.0.pptx",
-    "domainCode" : "repair",
-    "docNo" : "QM-WX-KYJ-2026-002",
-    "title" : "GA-75 空压机故障指示与安全标识图集",
-    "version" : "V1.0",
-    "docStatus" : "现行",
-    "secrecy" : "内部公开",
-    "ownerDept" : "设备动力部"
-  }, {
-    "file" : "tech/QM-JS-HYZ-2026-003_V1.0.pptx",
-    "domainCode" : "tech",
-    "docNo" : "QM-JS-HYZ-2026-003",
-    "title" : "液压站 HYZ-40 油位、管路与渗漏点图示",
-    "version" : "V1.0",
-    "docStatus" : "现行",
-    "secrecy" : "内部公开",
-    "ownerDept" : "设备动力部"
-  } ]
+  "_comment": "文档登记表。目录扫描只负责发现文件，元数据以本表为准；未登记的文件不会被入库（fail-closed）。file 为相对本文件所在目录的路径，一律用 / 分隔。",
+  "documents": [
+    {
+      "file": "制度流程/员工差旅与费用报销管理办法_V3.2_现行.pdf",
+      "domainCode": "policy",
+      "docNo": "QM-ZD-2026-003",
+      "title": "员工差旅与费用报销管理办法",
+      "version": "V3.2",
+      "docStatus": "现行",
+      "secrecy": "内部公开",
+      "ownerDept": "财务部",
+      "effectiveFrom": "2026-01-01"
+    },
+    {
+      "file": "制度流程/员工差旅与费用报销管理办法_V2.8_已废止.pdf",
+      "domainCode": "policy",
+      "docNo": "QM-ZD-2026-003",
+      "title": "员工差旅与费用报销管理办法",
+      "version": "V2.8",
+      "docStatus": "已废止",
+      "secrecy": "内部公开",
+      "ownerDept": "财务部",
+      "effectiveFrom": "2024-06-01",
+      "effectiveTo": "2025-12-31"
+    },
+    {
+      "file": "制度流程/设备停机与故障上报管理规定_V1.4.pdf",
+      "domainCode": "policy",
+      "docNo": "QM-ZD-2026-011",
+      "title": "设备停机与故障上报管理规定",
+      "version": "V1.4",
+      "docStatus": "现行",
+      "secrecy": "内部公开",
+      "ownerDept": "设备动力部",
+      "effectiveFrom": "2025-09-01"
+    },
+    {
+      "file": "制度流程/2026年度薪酬结构调整方案_草案.pdf",
+      "domainCode": "policy",
+      "docNo": "QM-ZD-2026-021",
+      "title": "2026 年度薪酬结构调整方案",
+      "version": "V0.9",
+      "docStatus": "草案·未生效",
+      "secrecy": "秘密",
+      "ownerDept": "人力资源部"
+    },
+    {
+      "file": "技术文档/CNC-850立式加工中心技术规格书_V2.0.pdf",
+      "domainCode": "tech",
+      "docNo": "QM-JS-CNC850-2025",
+      "title": "CNC-850 立式加工中心技术规格书",
+      "version": "V2.0",
+      "docStatus": "现行",
+      "secrecy": "内部公开",
+      "ownerDept": "工艺技术部",
+      "effectiveFrom": "2025-03-01"
+    },
+    {
+      "file": "技术文档/液压站HYZ-40原理与维护说明_V1.1.docx",
+      "domainCode": "tech",
+      "docNo": "QM-JS-HYZ40-2026",
+      "title": "液压站 HYZ-40 原理与维护说明",
+      "version": "V1.1",
+      "docStatus": "现行",
+      "secrecy": "内部公开",
+      "ownerDept": "工艺技术部",
+      "effectiveFrom": "2026-04-01"
+    },
+    {
+      "file": "维修/CNC-850常见故障排查手册_V1.3.pdf",
+      "domainCode": "repair",
+      "docNo": "QM-WX-CNC850-2026",
+      "title": "CNC-850 常见故障排查手册",
+      "version": "V1.3",
+      "docStatus": "现行",
+      "secrecy": "内部公开",
+      "ownerDept": "设备维修部",
+      "effectiveFrom": "2026-02-01"
+    },
+    {
+      "file": "维修/空压机GA-75定期保养作业指导书_V1.0.pdf",
+      "domainCode": "repair",
+      "docNo": "QM-WX-GA75-2026",
+      "title": "空压机 GA-75 定期保养作业指导书",
+      "version": "V1.0",
+      "docStatus": "现行",
+      "secrecy": "内部公开",
+      "ownerDept": "设备维修部",
+      "effectiveFrom": "2026-05-01"
+    }
+  ]
 }
