@@ -17,7 +17,11 @@ const view = ref('kernel')
 const user = ref(null)
 const ready = ref(false)
 
-const isAdmin = computed(() => user.value?.roleCode === 'admin')
+// 平台管理员：全局。租户管理员：只能进管理台、只能管自己租户的域/授权/审核。
+const isPlatformAdmin = computed(() => user.value?.roleCode === 'admin')
+const tenantAdmins = computed(() => user.value?.adminTenants || [])
+const isTenantAdmin = computed(() => tenantAdmins.value.length > 0)
+const canEnter = computed(() => isPlatformAdmin.value || isTenantAdmin.value)
 
 async function loadUser() {
   if (!getToken()) {
@@ -58,7 +62,7 @@ onMounted(loadUser)
 <template>
   <div v-if="!ready" class="boot">加载中…</div>
   <LoginView v-else-if="!user" @signed-in="onSignedIn" />
-  <div v-else-if="!isAdmin" class="shell">
+  <div v-else-if="!canEnter" class="shell">
     <div class="denied">
       <h1>无法进入管理控制台</h1>
       <p>当前账号（{{ user.displayName || user.username }} · {{ user.roleCode }}）不是管理员。</p>
@@ -71,22 +75,22 @@ onMounted(loadUser)
       <nav>
         <span :class="{ active: view === 'kernel' }" @click="view = 'kernel'">知识域管理</span>
         <span :class="{ active: view === 'ingest' }" @click="view = 'ingest'">文档与同步</span>
-        <span :class="{ active: view === 'users' }" @click="view = 'users'">用户与角色</span>
+        <span v-if="isPlatformAdmin" :class="{ active: view === 'users' }" @click="view = 'users'">用户与角色</span>
         <span :class="{ active: view === 'access' }" @click="view = 'access'">工作区授权</span>
-        <span :class="{ active: view === 'apiaccess' }" @click="view = 'apiaccess'">对外接入</span>
-        <span :class="{ active: view === 'observe' }" @click="view = 'observe'">运行记录</span>
-        <span :class="{ active: view === 'eval' }" @click="view = 'eval'">评测</span>
-        <span :class="{ active: view === 'settings' }" @click="view = 'settings'">系统配置</span>
+        <span v-if="isPlatformAdmin" :class="{ active: view === 'apiaccess' }" @click="view = 'apiaccess'">对外接入</span>
+        <span v-if="isPlatformAdmin" :class="{ active: view === 'observe' }" @click="view = 'observe'">运行记录</span>
+        <span v-if="isPlatformAdmin" :class="{ active: view === 'eval' }" @click="view = 'eval'">评测</span>
+        <span v-if="isPlatformAdmin" :class="{ active: view === 'settings' }" @click="view = 'settings'">系统配置</span>
       </nav>
       <div class="who">
-        <span>{{ user.displayName || user.username }}（{{ user.roleCode }}）</span>
+        <span>{{ user.displayName || user.username }}（{{ isPlatformAdmin ? user.roleCode : '租户管理员' }}）</span>
         <button type="button" @click="goPortal">用户门户</button>
         <button type="button" @click="logout">退出</button>
       </div>
     </header>
     <main>
-      <KernelView v-if="view === 'kernel'" />
-      <IngestView v-else-if="view === 'ingest'" :admin="true" />
+      <KernelView v-if="view === 'kernel'" :tenant-admin="isTenantAdmin" />
+      <IngestView v-else-if="view === 'ingest'" :admin="isPlatformAdmin" :tenant-admin="isTenantAdmin" />
       <UsersView v-else-if="view === 'users'" />
       <DomainAccessView v-else-if="view === 'access'" />
       <ApiAccessView v-else-if="view === 'apiaccess'" />

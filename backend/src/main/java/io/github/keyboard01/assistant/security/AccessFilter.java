@@ -13,6 +13,12 @@ import java.util.TreeSet;
  *   <li>本地文档表：{@link #sql()} 是可下推的 exists 子查询，值全部走占位符绑定；</li>
  *   <li>检索命中：反查 document 行后按 {@link #allows(List)} 判定。</li>
  * </ul>
+ *
+ * <p><b>租户谓词（多项目接入 S2）就织在 {@link #sql()} 里</b>，而不是让每个调用方自己拼。
+ * 理由：这条链路有 8 条 SQL（检索两路 + 被挡计数、找图三路、文档列表两条 + 可见数），
+ * 漏掉任何一条的表现都是"A 租户的公开库出现在 B 租户结果里"——不报错、只在数据上表现出来。
+ * 织进这里之后，"用到 {@code filter.sql()} 的查询自动带租户范围"，漏写变成不可能。
+ * 平台管理员不追加（跨租户可见），见 {@link TenantRule#applies}。</p>
  */
 public record AccessFilter(AccessSubject subject, String sql, List<Object> params) {
 
@@ -43,6 +49,14 @@ public record AccessFilter(AccessSubject subject, String sql, List<Object> param
             params.add(subject.deptCode());
         }
         sql.append("))");
+        // 租户范围：文档所属域的租户必须是当前用户所属租户之一（平台管理员跳过）。
+        // 它和文档级 ACL 是"与"的关系，所以 ALL:* 的语义自然收窄成"本租户全员"。
+        if (TenantRule.applies(subject)) {
+            sql.append(" and ").append(TenantRule.sql(alias));
+            for (Object param : TenantRule.params(subject)) {
+                params.add(param);
+            }
+        }
         return new AccessFilter(subject, sql.toString(), params);
     }
 

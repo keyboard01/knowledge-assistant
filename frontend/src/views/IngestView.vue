@@ -5,8 +5,10 @@ import DocumentViewer from './DocumentViewer.vue'
 
 // admin=false 时是用户门户的只读视图：隐藏上传/扫描/重试/状态切换等管理动作。
 // 后端对这些接口本就限 admin，这里只是别给用户一个点了必然 403 的入口。
+// tenantAdmin=true 时（多项目接入 S3）只多放「待审核」表——它能审自己租户的草案，其余管理动作仍平台管理员。
 const props = defineProps({
-  admin: { type: Boolean, default: false }
+  admin: { type: Boolean, default: false },
+  tenantAdmin: { type: Boolean, default: false }
 })
 
 // 知识域列表（上传时选域）；viewer 拿不到就留空，上传按钮随后提示
@@ -296,7 +298,7 @@ onMounted(() => {
       </div>
     </section>
 
-    <section v-if="admin && pendingDocs.length" class="card">
+    <section v-if="(admin || tenantAdmin) && pendingDocs.length" class="card">
       <header class="card-head">
         <div>
           <h2>待审核</h2>

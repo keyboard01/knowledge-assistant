@@ -47,7 +47,21 @@
       <artifactId>postgresql</artifactId>
       <version>${postgresql.version}</version>
       <scope>runtime</scope>
-    </dependency>    <!-- P2 T14 解析：PDF 用 PDFBox，DOCX 用 POI。版本都锁本地仓库已缓存的那一份，
+    </dependency>
+    <!-- 数据库迁移（P5）：Flyway 按版本号执行 db/migration/V*.sql，每个版本只跑一次并记在 flyway_schema_history。
+         为什么换掉"每次启动跑幂等 schema.sql"：多租户要加表 + 给老数据回填 + 收窄权限语义，三者叠加后
+         必须保证顺序与一次性，启动时脚本已经撑不住（详见 docs/架构说明.md §7）。
+         10.x 起 PostgreSQL 支持拆到了独立 artifact，必须两个一起引；版本由 Boot BOM 管。
+         ⚠ 本地仓库此前没有这两个 jar，离线构建前需要先联网预热一次。 -->
+    <dependency>
+      <groupId>org.flywaydb</groupId>
+      <artifactId>flyway-core</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.flywaydb</groupId>
+      <artifactId>flyway-database-postgresql</artifactId>
+    </dependency>
+    <!-- P2 T14 解析：PDF 用 PDFBox，DOCX 用 POI。版本都锁本地仓库已缓存的那一份，
          保证 mvn -o 离线可构建；PDFBox 3.x 本地只有 .lastUpdated（下载失败标记），所以用 2.0.17。 -->
     <dependency>
       <groupId>org.apache.pdfbox</groupId>

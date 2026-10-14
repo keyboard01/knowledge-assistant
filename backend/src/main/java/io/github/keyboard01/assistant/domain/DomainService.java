@@ -5,6 +5,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -19,7 +20,9 @@ import io.github.keyboard01.assistant.security.AccessSubject;
 import io.github.keyboard01.assistant.security.AclRule;
 import io.github.keyboard01.assistant.security.DocumentVisibility;
 import io.github.keyboard01.assistant.security.DomainAclRepository;
+import io.github.keyboard01.assistant.security.TenantRule;
 import io.github.keyboard01.assistant.settings.SettingService;
+import io.github.keyboard01.assistant.tenant.TenantRepository;
 
 @Service
 public class DomainService {
@@ -29,8 +32,12 @@ public class DomainService {
     /**
      * 知识域视图。{@code visibleDocuments} 是**当前身份可见**的文档数（AC-P1-009），
      * 刻意不是文档总数——总数会顺带告诉调用方"这个域里还有你看不到的文档"。
+     *
+     * <p>{@code tenantCode} 是它所属的租户：目前只用于展示与"建域时选租户"，
+     * 可见性作用域还没按它收窄（那是多项目接入的下一步，见 docs/多项目接入方案.md）。</p>
      */
-    public record DomainView(String code, String name, String description, boolean enabled, int visibleDocuments) {
+    public record DomainView(String code, String name, String description, boolean enabled, int visibleDocuments,
+                             String tenantCode) {
     }
 
     public record CheckItem(String key, String title, String status, String detail) {
@@ -43,30 +50,39 @@ public class DomainService {
     private static final String WARN = "WARN";
     private static final String FAIL = "FAIL";
 
+    /** 默认租户：V2 迁移建的那一个，升级前就存在的域都归它；建域不指定租户时也落这里。 */
+    static final String DEFAULT_TENANT = "default";
+
     private final DomainRepository repository;
     private final SettingService settingService;
     private final DocumentRepository documentRepository;
     private final KnowledgeRetriever retriever;
     private final DomainAclRepository domainAclRepository;
     private final AssetStore assetStore;
+    private final TenantRepository tenantRepository;
 
     public DomainService(DomainRepository repository, SettingService settingService,
                          DocumentRepository documentRepository, KnowledgeRetriever retriever,
-                         DomainAclRepository domainAclRepository, AssetStore assetStore) {
+                         DomainAclRepository domainAclRepository, AssetStore assetStore,
+                         TenantRepository tenantRepository) {
         this.repository = repository;
         this.settingService = settingService;
         this.documentRepository = documentRepository;
         this.retriever = retriever;
         this.domainAclRepository = domainAclRepository;
         this.assetStore = assetStore;
+        this.tenantRepository = tenantRepository;
     }
 
     /**
      * 列出**当前身份可见**的知识域，并带上当前身份的可见文档数。
      *
-     * <p>两道门都要过：先域级授权（{@code domain_acl}，admin 短路放行），再过文档级 ACL。
-     * 域级过滤必须在这里做——否则用户能从一个"无权访问的域"里读到可见文档数，等于泄露它有多少内容。
-     * 可见数只为"把看不见的域标出来"服务。</p>
+     * <p>两道门都要过：先域级授权（{@code domain_acl}，admin 短路放行）**加租户范围**，
+     * 再过文档级 ACL。域级过滤必须在这里做——否则用户能从一个"无权访问的域"里读到可见文档数，
+     * 等于泄露它有多少内容。可见数只为"把看不见的域标出来"服务。</p>
+     *
+     * <p>租户范围在这里判而不是在 SQL 里：域列表本来就全量载入内存，
+     * 逐个域查一次租户归属没有意义，所以租户集合只查一次（见 {@link TenantRule#allows}）。</p>
      */
     public List<DomainView> list(AccessSubject subject) {
         Map<String, Integer> visible = documentRepository.countVisibleByDomain(
@@ -74,18 +90,34 @@ public class DomainService {
         List<KnowledgeDomain> all = repository.findAll();
         Map<String, List<AclRule>> grants = domainAclRepository.findByDomainCodes(
                 all.stream().map(KnowledgeDomain::code).toList());
-        boolean admin = isAdmin(subject);
+        boolean admin = TenantRule.isPlatformAdmin(subject);
+        Set<String> myTenants = admin ? Set.of() : tenantRepository.tenantsOf(subject.username());
         return all.stream()
-                .filter(domain -> admin || AclRule.grantsAny(subject, grants.get(domain.code())))
-                .map(domain -> new DomainView(domain.code(), domain.name(),
-                        domain.description(), domain.enabled(), visible.getOrDefault(domain.code(), 0)))
+                .filter(domain -> admin
+                        || (TenantRule.allows(subject, domain.tenantCode(), myTenants)
+                        && AclRule.grantsAny(subject, grants.get(domain.code()))))
+                .map(domain -> new DomainView(domain.code(), domain.name(), domain.description(),
+                        domain.enabled(), visible.getOrDefault(domain.code(), 0), domain.tenantCode()))
                 .toList();
     }
 
-    /** 域级可见性：admin 一律可见（否则会把自己锁在私有域外），其余按 domain_acl 命中。 */
+    /**
+     * 域级可见性：**平台管理员**一律可见（否则会把自己锁在私有域外），
+     * 其余人必须同时满足"域在他的租户里"（{@link TenantRule}）与"域授权命中"。
+     *
+     * <p>判租户归属要读一次域行与一次成员关系；这条路径每次检索/查看/找图都会走，
+     * 但正确性优先——漏判这一条就是跨租户泄漏。</p>
+     */
     public boolean canAccess(AccessSubject subject, String domainCode) {
-        if (isAdmin(subject)) {
+        if (TenantRule.isPlatformAdmin(subject)) {
             return true;
+        }
+        KnowledgeDomain domain = repository.findByCode(domainCode).orElse(null);
+        if (domain == null) {
+            return false;
+        }
+        if (!TenantRule.allows(subject, domain.tenantCode(), tenantRepository.tenantsOf(subject.username()))) {
+            return false;
         }
         return AclRule.grantsAny(subject, domainAclRepository.findByDomainCode(domainCode));
     }
@@ -100,25 +132,21 @@ public class DomainService {
         }
     }
 
-    public List<AclRule> listAcl(String code) {
-        if (repository.findByCode(code).isEmpty()) {
-            throw new IllegalArgumentException("知识域不存在：" + code);
-        }
+    public List<AclRule> listAcl(AccessSubject subject, String code) {
+        KnowledgeDomain domain = repository.findByCode(code)
+                .orElseThrow(() -> new IllegalArgumentException("知识域不存在：" + code));
+        requireAdminister(subject, domain.tenantCode(), "查看知识域 " + code + " 的授权");
         return domainAclRepository.findByDomainCode(code);
     }
 
-    /** 整份替换某域的授权（admin）。留空即"只有 admin 可见"。 */
-    public List<AclRule> replaceAcl(String code, List<AclRule> rules) {
-        if (repository.findByCode(code).isEmpty()) {
-            throw new IllegalArgumentException("知识域不存在：" + code);
-        }
+    /** 整份替换某域的授权。留空即"只有管理员可见"。 */
+    public List<AclRule> replaceAcl(AccessSubject subject, String code, List<AclRule> rules) {
+        KnowledgeDomain domain = repository.findByCode(code)
+                .orElseThrow(() -> new IllegalArgumentException("知识域不存在：" + code));
+        requireAdminister(subject, domain.tenantCode(), "修改知识域 " + code + " 的授权");
         domainAclRepository.replace(code, rules);
         log.info("已更新知识域授权 {}：{} 条规则", code, rules == null ? 0 : rules.size());
         return domainAclRepository.findByDomainCode(code);
-    }
-
-    private static boolean isAdmin(AccessSubject subject) {
-        return subject.roles().stream().anyMatch(role -> "admin".equalsIgnoreCase(role));
     }
 
     /**
@@ -231,42 +259,105 @@ public class DomainService {
         return value == null ? "" : value.trim();
     }
 
-    /** 新建知识域（admin）。 */
-    public DomainView create(String code, String name, String description, Boolean enabled) {
+    /**
+     * 管理权（多项目接入 S3）：平台管理员管全部；租户管理员只能管自己租户的域。
+     *
+     * <p>这是"租户管理员"这一角色的核心判定，域 CRUD / 域授权 / 上传审核三处都走它——
+     * 不能各写一遍，否则某一条漏判就是跨租户越权。</p>
+     */
+    public boolean canAdminister(AccessSubject subject, String tenantCode) {
+        if (TenantRule.isPlatformAdmin(subject)) {
+            return true;
+        }
+        return tenantRepository.isTenantAdmin(subject.username(), tenantCode);
+    }
+
+    /**
+     * 新建知识域。
+     *
+     * <p><b>租户作用域</b>：平台管理员可指定任意租户（留空落默认租户）；租户管理员只能建在
+     * 自己管理的租户里（留空时若只管理一个租户就自动用那一个，管理多个则必须显式指定；
+     * 指定了非自己管理的租户 → 拒绝）。</p>
+     */
+    public DomainView create(AccessSubject subject, String code, String name, String description, Boolean enabled,
+                             String tenantCode) {
         String normalized = requireCode(code);
         String title = requireText(name, "知识域名称不能为空");
         if (repository.findByCode(normalized).isPresent()) {
             throw new IllegalArgumentException("知识域已存在：" + normalized);
         }
+        String tenant = resolveTenant(subject, tenantCode);
         String desc = description == null ? null : description.trim();
-        repository.insert(normalized, title, desc, repository.maxSortOrder() + 1);
+        repository.insert(normalized, title, desc, repository.maxSortOrder() + 1, tenant, subject.username());
         // 新建域默认公开：写一行 ALL:* 授权。否则 fail-closed 下新域对所有人都不可见。
         domainAclRepository.replace(normalized, List.of(new AclRule("ALL", "*", AclRule.READ)));
-        log.info("已创建知识域 {}（{}）", normalized, title);
+        log.info("已创建知识域 {}（{}），租户 {}，创建者 {}", normalized, title, tenant, subject.username());
         // enabled 参数当前只在更新时生效（新建恒为启用）
-        return new DomainView(normalized, title, desc, true, 0);
+        return new DomainView(normalized, title, desc, true, 0, tenant);
     }
 
-    public DomainView update(String code, String name, String description, Boolean enabled) {
+    /** 定新建域落在哪个租户：平台管理员可任意，租户管理员锁定在自己管理的租户。 */
+    private String resolveTenant(AccessSubject subject, String tenantCode) {
+        String specified = tenantCode == null ? "" : tenantCode.trim();
+        if (TenantRule.isPlatformAdmin(subject)) {
+            String tenant = specified.isEmpty() ? DEFAULT_TENANT : specified;
+            if (!repository.tenantExists(tenant)) {
+                throw new IllegalArgumentException("租户不存在：" + tenant);
+            }
+            return tenant;
+        }
+        // 非平台管理员 = 只可能是租户管理员（普通用户连域级门都进不来）
+        Set<String> administered = tenantRepository.administeredTenants(subject.username());
+        String tenant = specified;
+        if (tenant.isEmpty()) {
+            if (administered.size() == 1) {
+                tenant = administered.iterator().next();
+            } else {
+                throw new IllegalArgumentException("请指定知识域所属租户");
+            }
+        }
+        if (!administered.contains(tenant)) {
+            throw new IllegalArgumentException("无权在该租户下创建知识域：" + tenant);
+        }
+        return tenant;
+    }
+
+    public DomainView update(AccessSubject subject, String code, String name, String description, Boolean enabled) {
         KnowledgeDomain domain = repository.findByCode(code)
                 .orElseThrow(() -> new IllegalArgumentException("知识域不存在：" + code));
+        requireAdminister(subject, domain.tenantCode(), "管理知识域 " + code);
         String newName = name == null || name.isBlank() ? domain.name() : name.trim();
         String newDesc = description == null ? domain.description() : description.trim();
         boolean newEnabled = enabled == null ? domain.enabled() : enabled;
         repository.update(code, newName, newDesc, newEnabled);
-        return new DomainView(code, newName, newDesc, newEnabled, 0);
+        return new DomainView(code, newName, newDesc, newEnabled, 0, domain.tenantCode());
     }
 
     /** 删除知识域。**有文档就拒绝**——文档行有外键指向它。 */
-    public void delete(String code) {
-        repository.findByCode(code)
+    public void delete(AccessSubject subject, String code) {
+        KnowledgeDomain domain = repository.findByCode(code)
                 .orElseThrow(() -> new IllegalArgumentException("知识域不存在：" + code));
+        requireAdminister(subject, domain.tenantCode(), "删除知识域 " + code);
         int documents = documentRepository.countByDomain(code);
         if (documents > 0) {
             throw new IllegalStateException("知识域下还有 " + documents + " 份文档，请先清理或改为停用");
         }
         repository.delete(code);
         log.info("已删除知识域 {}", code);
+    }
+
+    /** 管理权守卫：没有就抛可读的 400，与"域不存在与无权同形"的既有口径一致（不暴露更多信息）。 */
+    private void requireAdminister(AccessSubject subject, String tenantCode, String action) {
+        if (!canAdminister(subject, tenantCode)) {
+            throw new IllegalArgumentException("无权" + action);
+        }
+    }
+
+    /** 按域代码的管理权守卫（审核文档用：从域反查租户再判）。 */
+    public void requireAdministerDomain(AccessSubject subject, String domainCode, String action) {
+        KnowledgeDomain domain = repository.findByCode(domainCode)
+                .orElseThrow(() -> new IllegalArgumentException("知识域不存在：" + domainCode));
+        requireAdminister(subject, domain.tenantCode(), action);
     }
 
     /** code 是 URL 路径与文档域字段的一部分，限小写字母数字与 -_，长度 2~32。 */

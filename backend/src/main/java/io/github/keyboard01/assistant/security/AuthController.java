@@ -49,7 +49,7 @@ public class AuthController {
     /** 前端用它判断"我登录了吗"，401 即未登录。 */
     @GetMapping("/me")
     public Map<String, Object> me() {
-        return Map.of("user", AuthService.UserView.of(CurrentUser.require()));
+        return Map.of("user", authService.userView(CurrentUser.require()));
     }
 
     /** 自助改密：旧密码不对返回 400（不是 401，否则前端会当成会话失效把人踢回登录页）。 */

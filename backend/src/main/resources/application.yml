@@ -23,13 +23,18 @@ spring:
       # 与查看入口的 20MB 上限（那是"下载查看"）各自独立。
       max-file-size: 50MB
       max-request-size: 52MB
-  sql:
-    init:
-      mode: always
-      # Windows 下 JVM 默认字符集是 GBK，不显式指定会把 UTF-8 的 schema.sql 读成乱码写进库
-      encoding: UTF-8
-      schema-locations: classpath:db/schema.sql
-      continue-on-error: false
+  # 数据库迁移（P5）：交给 Flyway 按 db/migration/V*.sql 的版本号执行，每个版本只跑一次。
+  # 不再用 spring.sql.init（那是"每次启动跑一遍幂等脚本"），两者同时开会双跑。
+  flyway:
+    enabled: true
+    # 存量库（有表但没有 flyway_schema_history）自动写一条 baseline(1) 并跳过 V1——
+    # V1 里有"给域补默认公开授权"这类一次性回填，重跑会复活管理员刻意清空的授权。
+    # 全新库是空 schema，不触发 baseline，正常执行 V1 建表。
+    baseline-on-migrate: true
+    baseline-version: 1
+    # Windows 下 JVM 默认字符集是 GBK，不显式指定会把 UTF-8 的迁移脚本读成乱码写进库
+    encoding: UTF-8
+    locations: classpath:db/migration
 
 assistant:
   retrieval:

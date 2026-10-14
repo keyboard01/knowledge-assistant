@@ -36,18 +36,20 @@ class ImageAssetRepositoryTest {
     }
 
     @Test
-    @DisplayName("两条查询都下推了文档级 ACL 与「现行」状态门")
+    @DisplayName("两条查询都下推了文档级 ACL、租户范围与「现行」状态门")
     void queriesCarryAclAndStatus() {
         String vector = ImageAssetRepository.vectorQuery(VIEWER, "policy", "[0]", 5, 0).sql();
         String keyword = ImageAssetRepository.keywordQuery(VIEWER, "policy", "x", 5, 0).sql();
         assertTrue(vector.contains("document_acl"));
         assertTrue(vector.contains("doc_status like"));
+        assertTrue(vector.contains("tenant_member"), "找图的向量通道必须带租户谓词：" + vector);
         assertTrue(keyword.contains("document_acl"));
         assertTrue(keyword.contains("doc_status like"));
+        assertTrue(keyword.contains("tenant_member"), "找图的关键词通道必须带租户谓词：" + keyword);
     }
 
     @Test
-    @DisplayName("视觉向量查询：占位符数 == 绑定参数数，且下推 ACL 与现行状态")
+    @DisplayName("视觉向量查询：占位符数 == 绑定参数数，且下推 ACL、租户与现行状态")
     void visionVectorQueryBalanced() {
         ImageAssetRepository.Query query =
                 ImageAssetRepository.visionVectorQuery(VIEWER, "policy", "[0.1,0.2]", 5, 0.2);
@@ -55,6 +57,7 @@ class ImageAssetRepositoryTest {
         assertTrue(query.sql().contains("vision_embedding"));
         assertTrue(query.sql().contains("document_acl"));
         assertTrue(query.sql().contains("doc_status like"));
+        assertTrue(query.sql().contains("tenant_member"), "找图的视觉通道必须带租户谓词：" + query.sql());
     }
 
     @Test

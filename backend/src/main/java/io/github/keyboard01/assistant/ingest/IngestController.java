@@ -48,11 +48,14 @@ public class IngestController {
     private final IngestService service;
     private final DocumentRepository documents;
     private final IngestTaskRepository tasks;
+    private final io.github.keyboard01.assistant.domain.DomainService domains;
 
-    public IngestController(IngestService service, DocumentRepository documents, IngestTaskRepository tasks) {
+    public IngestController(IngestService service, DocumentRepository documents, IngestTaskRepository tasks,
+                            io.github.keyboard01.assistant.domain.DomainService domains) {
         this.service = service;
         this.documents = documents;
         this.tasks = tasks;
+        this.domains = domains;
     }
 
     /**
@@ -121,15 +124,19 @@ public class IngestController {
 
     private static final java.util.Set<String> DOC_STATUSES = java.util.Set.of("现行", "已废止", "草案·未生效");
 
-    /** 文档版本状态切换（现行 / 已废止 / 草案·未生效），admin。 */
+    /**
+     * 文档版本状态切换（现行 / 已废止 / 草案·未生效）。
+     * 多项目接入 S3 起放开给租户管理员：只能审核**自己租户**的文档（按文档所属域的租户判）。
+     */
     @PutMapping("/documents/{id}/status")
-    @RequireRole("admin")
     public DocumentView updateStatus(@PathVariable long id, @RequestBody StatusRequest request) {
         String status = request.docStatus() == null ? "" : request.docStatus().trim();
         if (!DOC_STATUSES.contains(status)) {
             throw new IllegalArgumentException("文档状态只能是：" + String.join(" / ", DOC_STATUSES));
         }
-        documents.findById(id).orElseThrow(() -> new IllegalArgumentException("文档不存在：" + id));
+        DocumentRepository.Row row = documents.findById(id)
+                .orElseThrow(() -> new IllegalArgumentException("文档不存在：" + id));
+        domains.requireAdministerDomain(CurrentUser.subject(), row.domainCode(), "审核文档 " + id);
         documents.updateStatus(id, status);
         return documents.findById(id).map(DocumentView::of)
                 .orElseThrow(() -> new IllegalStateException("更新后读取文档失败：" + id));

@@ -1,3 +1,20 @@
+-- ============================================================================
+-- V1：迁移前的 schema 快照（基线）。
+--
+-- 来源：原来那份"每次启动都跑一遍"的幂等 schema.sql（create if not exists /
+-- alter add column if not exists / on conflict do update）。内容**逐字保留**，
+-- 只改了这条头注释与 schema_migration 的解释。
+--
+-- 两种库走的是不同路径（靠 spring.flyway.baseline-on-migrate=true 自动分开）：
+--   · 存量库：非空且没有 flyway_schema_history → 写一条 baseline(1)、**跳过本文件**，只跑 V2+。
+--     必须跳过：本文件里有"给域补默认公开授权"这类一次性回填，重跑会把管理员
+--     刻意清空的域重新变回公开（见下面 schema_migration 段的说明）。
+--   · 全新库：空 schema → 不触发 baseline → 正常执行本文件，建出与存量库一致的结构。
+--
+-- 因此：**不要修改本文件**。它是历史基线，改它会让全新库与存量库的结构产生分歧；
+-- 后续 schema 变更一律新增 V2、V3…（校验和一旦不一致，Flyway 会拒绝启动）。
+-- ============================================================================
+
 -- 系统连接与模型配置。密钥仅服务端存储，接口只回显掩码。
 create table if not exists app_setting (
     group_code  varchar(64)  not null,
@@ -56,8 +73,11 @@ comment on table domain_acl is '工作区(知识域)级授权；subject_type 与
 create index if not exists idx_domain_acl_domain on domain_acl (domain_code);
 create index if not exists idx_domain_acl_subject on domain_acl (subject_type, subject_value);
 
--- 一次性迁移标记表：schema.sql 每次启动都会执行，需要用"是否已经迁移过"来区分"首次补数据"
+-- 一次性迁移标记表（**历史机制，已被 Flyway 取代，仅为保持新旧库同构而保留**）。
+-- 当初的用途：schema.sql 每次启动都执行，需要用"是否已经迁移过"来区分"首次补数据"
 -- 和"管理员后来刻意清空（= 只有管理员可见）"。没有这张表，清空的域会被每次重启重新补回公开授权。
+-- 现在由 flyway_schema_history 承担这个职责：本文件在存量库上被 baseline 跳过、在全新库上只跑一次。
+-- 表本身没有读者（全仓无 Java/脚本查询它），保留是为了让全新库与存量库结构完全一致。
 create table if not exists schema_migration (
     id         varchar(64) primary key,
     applied_at timestamptz not null default now()
@@ -170,6 +190,12 @@ insert into schema_migration (id) values ('chunk_status_backfill_v1') on conflic
 -- 分块粒度是检索质量的第一变量，实测（余弦）：同一句定义句，埋在一整页里 0.21，
 -- 独立成块 0.75。自己分块、自己向量化、自己算余弦。
 create extension if not exists pg_trgm;
+-- `vector` 类型（pgvector）此前**没有**在这里建，只靠"镜像里有这个扩展可用"：
+-- 存量库当初是手工执行过 CREATE EXTENSION 才起来的，而全新部署会在下面第一条
+-- `vector(1024)` 上直接报 `type "vector" does not exist` ——（2026-10-14 起空库实测暴露）。
+-- 扩展本身由 pgvector/pgvector 镜像提供（可用 ≠ 已安装），所以这里补一句即可自动化。
+-- 位置必须在任何用到 vector 的建表语句之前。
+create extension if not exists vector;
 
 alter table document_chunk add column if not exists content text;
 alter table document_chunk add column if not exists kind varchar(16);

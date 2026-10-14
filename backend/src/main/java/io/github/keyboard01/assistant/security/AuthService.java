@@ -25,12 +25,23 @@ public class AuthService {
     private static final Logger log = LoggerFactory.getLogger(AuthService.class);
     private static final String BAD_CREDENTIALS = "用户名或密码不正确";
 
+    /**
+     * 账号视图。{@code tenants} 是它所属的租户（决定能看见哪些知识域），
+     * {@code adminTenants} 是它担任**租户管理员**的租户（决定能管哪些域/授权/审核）。
+     * 登录接口与管理端列表都带上，前端据此裁剪入口与视图。
+     */
     public record UserView(long id, String username, String displayName, String roleCode, String deptCode,
-                           boolean enabled) {
+                           boolean enabled, java.util.List<String> tenants, java.util.List<String> adminTenants) {
 
         public static UserView of(AppUser user) {
+            return of(user, java.util.List.of(), java.util.List.of());
+        }
+
+        public static UserView of(AppUser user, java.util.List<String> tenants, java.util.List<String> adminTenants) {
             return new UserView(user.id(), user.username(), user.displayName(), user.roleCode(), user.deptCode(),
-                    user.enabled());
+                    user.enabled(),
+                    tenants == null ? java.util.List.of() : java.util.List.copyOf(tenants),
+                    adminTenants == null ? java.util.List.of() : java.util.List.copyOf(adminTenants));
         }
     }
 
@@ -40,11 +51,21 @@ public class AuthService {
     private final UserRepository users;
     private final SessionRepository sessions;
     private final PasswordHasher passwordHasher;
+    private final io.github.keyboard01.assistant.tenant.TenantRepository tenants;
 
-    public AuthService(UserRepository users, SessionRepository sessions, PasswordHasher passwordHasher) {
+    public AuthService(UserRepository users, SessionRepository sessions, PasswordHasher passwordHasher,
+                       io.github.keyboard01.assistant.tenant.TenantRepository tenants) {
         this.users = users;
         this.sessions = sessions;
         this.passwordHasher = passwordHasher;
+        this.tenants = tenants;
+    }
+
+    /** 带租户与租户管理员归属的完整账号视图（登录 / me 都用它，前端据此裁剪入口）。 */
+    public UserView userView(AppUser user) {
+        java.util.Set<String> codes = tenants.tenantsOf(user.username());
+        java.util.Set<String> admins = tenants.administeredTenants(user.username());
+        return UserView.of(user, codes.stream().toList(), admins.stream().toList());
     }
 
     public LoginResult login(String username, String rawPassword) {
@@ -78,7 +99,7 @@ public class AuthService {
         sessions.insert(SessionToken.hash(token), user.id(), expiresAt);
         users.markLogin(user.id());
         log.info("登录成功 username={} role={} 有效期至 {}", user.username(), user.roleCode(), expiresAt);
-        return new LoginResult(token, expiresAt, UserView.of(user));
+        return new LoginResult(token, expiresAt, userView(user));
     }
 
     public Optional<AppUser> resolve(String token) {

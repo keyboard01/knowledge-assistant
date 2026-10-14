@@ -21,8 +21,12 @@ import io.github.keyboard01.assistant.security.RequireRole;
 @RequestMapping("/api/domains")
 public class DomainController {
 
-    /** 新建/更新的载荷。code 只在新建时用；改 code 等于换一个域，不做。 */
-    public record DomainRequest(String code, String name, String description, Boolean enabled) {
+    /**
+     * 新建/更新的载荷。code 只在新建时用；改 code 等于换一个域，不做。
+     * {@code tenantCode} 只在新建时用（留空落默认租户）——域建好后换租户等于搬家，
+     * 那会把它的可见性作用域整块挪走，需要单独的迁移动作，不在本接口里做。
+     */
+    public record DomainRequest(String code, String name, String description, Boolean enabled, String tenantCode) {
     }
 
     private final DomainService service;
@@ -40,26 +44,27 @@ public class DomainController {
         return Map.of("domains", service.list(CurrentUser.subject()));
     }
 
-    /** 新建知识域（admin）。 */
+    /**
+     * 新建知识域。平台管理员可指定任意租户，租户管理员只能建在自己管理的租户里
+     * （判定在 {@code DomainService.create} 内，controller 不再用 @RequireRole 全局拦）。
+     */
     @PostMapping
-    @RequireRole("admin")
     public DomainService.DomainView create(@RequestBody DomainRequest request) {
-        return service.create(request.code(), request.name(), request.description(), request.enabled());
+        return service.create(CurrentUser.subject(), request.code(), request.name(), request.description(),
+                request.enabled(), request.tenantCode());
     }
 
-    /** 更新知识域的名称/描述/启用状态（admin）。 */
+    /** 更新知识域的名称/描述/启用状态。 */
     @PutMapping("/{code}")
-    @RequireRole("admin")
     public DomainService.DomainView update(@PathVariable String code, @RequestBody DomainRequest request) {
-        return service.update(code, request.name(), request.description(), request.enabled());
+        return service.update(CurrentUser.subject(), code, request.name(), request.description(), request.enabled());
     }
 
-    /** 删除知识域（admin）。有文档时拒绝——先清理或改为停用。 */
+    /** 删除知识域。有文档时拒绝——先清理或改为停用。 */
     @DeleteMapping("/{code}")
-    @RequireRole("admin")
     @ResponseStatus(HttpStatus.NO_CONTENT)
     public void delete(@PathVariable String code) {
-        service.delete(code);
+        service.delete(CurrentUser.subject(), code);
     }
 
     /** 本地自检（admin）：文档目录、图片资产目录、本地检索链路、向量化配置。 */

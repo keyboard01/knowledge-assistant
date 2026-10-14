@@ -44,15 +44,17 @@ class DocumentChunkRepositoryTest {
     }
 
     @Test
-    @DisplayName("ACL 下推的参数确实进了绑定值（角色 / 用户名 / 部门）")
+    @DisplayName("ACL 下推的参数确实进了绑定值（角色 / 用户名 / 部门 / 租户）")
     void aclParamsAreCarriedOver() {
         DocumentChunkRepository.Query query =
                 DocumentChunkRepository.vectorQuery(FILTER, "policy", "[1.0]", 5, 0.0);
 
-        assertEquals(3, FILTER.paramsArray().length);
+        // 第 4 个是租户谓词的参数（用户名再绑一次）：S2 起每条链路都要求"域属于我的租户"
+        assertEquals(4, FILTER.paramsArray().length);
         assertTrue(Arrays.asList(query.params()).contains("viewer"));
         assertTrue(Arrays.asList(query.params()).contains("zhang.san"));
         assertTrue(Arrays.asList(query.params()).contains("D01"));
+        assertTrue(query.sql().contains("tenant_member"), "租户谓词必须下推到 SQL 里：" + query.sql());
     }
 
     @Test

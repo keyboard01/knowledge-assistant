@@ -5,6 +5,8 @@ import { adminApi, dingtalkApi } from '../../api/client.js'
 // 用户与角色管理（admin）。角色下拉取 app_role 字典，不写死。
 const users = ref([])
 const roles = ref([])
+// 已有租户清单（建号/改号时可填的候选，来自 /api/admin/users 的 tenants）
+const tenants = ref([])
 const error = ref('')
 const notice = ref('')
 const busy = ref('')
@@ -18,6 +20,14 @@ const pwdForm = ref(null)
 const pwdError = ref('')
 const pwdBusy = ref(false)
 
+/** 租户输入是逗号分隔的文本框；顿号与空格也接受，留空则由后端落默认租户。 */
+function parseTenants(text) {
+  return String(text || '')
+    .split(/[,，、\s]+/)
+    .map((t) => t.trim())
+    .filter(Boolean)
+}
+
 function roleName(code) {
   return roles.value.find((r) => r.code === code)?.name || code
 }
@@ -27,6 +37,7 @@ async function load() {
   try {
     const [u, r] = await Promise.all([adminApi.users(), adminApi.roles()])
     users.value = u.users
+    tenants.value = u.tenants || []
     roles.value = r.roles
   } catch (e) {
     error.value = e.message
@@ -59,6 +70,8 @@ function openCreate() {
     roleCode: roles.value[0]?.code || 'viewer',
     deptCode: '',
     password: '',
+    tenants: '',
+    adminTenants: '',
     enabled: true
   }
   formError.value = ''
@@ -73,6 +86,8 @@ function openEdit(user) {
     roleCode: user.roleCode,
     deptCode: user.deptCode || '',
     password: '',
+    tenants: (user.tenants || []).join(','),
+    adminTenants: (user.adminTenants || []).join(','),
     enabled: user.enabled
   }
   formError.value = ''
@@ -89,7 +104,9 @@ async function submitForm() {
         displayName: f.displayName,
         roleCode: f.roleCode,
         deptCode: f.deptCode,
-        password: f.password
+        password: f.password,
+        tenantCodes: parseTenants(f.tenants),
+        adminTenantCodes: parseTenants(f.adminTenants)
       })
       notice.value = `已创建用户 ${f.username}`
     } else {
@@ -97,7 +114,9 @@ async function submitForm() {
         displayName: f.displayName,
         roleCode: f.roleCode,
         deptCode: f.deptCode,
-        enabled: f.enabled
+        enabled: f.enabled,
+        tenantCodes: parseTenants(f.tenants),
+        adminTenantCodes: parseTenants(f.adminTenants)
       })
       notice.value = `已更新用户 ${f.username}`
     }
@@ -183,7 +202,7 @@ onMounted(load)
         <table class="grid">
           <thead>
             <tr>
-              <th>用户名</th><th>显示名</th><th>角色</th><th>部门</th><th>状态</th><th></th>
+              <th>用户名</th><th>显示名</th><th>角色</th><th>部门</th><th>租户</th><th>状态</th><th></th>
             </tr>
           </thead>
           <tbody>
@@ -192,6 +211,10 @@ onMounted(load)
               <td>{{ user.displayName || '—' }}</td>
               <td>{{ user.roleCode }} <span class="muted-soft">{{ roleName(user.roleCode) }}</span></td>
               <td>{{ user.deptCode || '—' }}</td>
+              <td>
+                <template v-for="t in (user.tenants || [])" :key="t">{{ t }}<em v-if="(user.adminTenants || []).includes(t)" class="admin-tag">管</em> </template>
+                <span v-if="!(user.tenants || []).length">—</span>
+              </td>
               <td>
                 <span :class="['pill', user.enabled ? 'ok' : 'err']">{{ user.enabled ? '启用' : '停用' }}</span>
               </td>
@@ -229,6 +252,14 @@ onMounted(load)
             </select>
           </label>
           <label class="field"><span>部门 <em>可选</em></span><input v-model="form.deptCode" /></label>
+          <label class="field">
+            <span>租户 <em>决定能看见哪些知识域；留空 = 默认租户</em></span>
+            <input v-model="form.tenants" :placeholder="tenants.join('、') || 'default'" />
+          </label>
+          <label class="field">
+            <span>管理员租户 <em>须是上面租户的子集；在这些租户里能管域/授权/审核</em></span>
+            <input v-model="form.adminTenants" placeholder="留空 = 都不是管理员" />
+          </label>
           <label v-if="form.mode === 'create'" class="field">
             <span>初始密码</span>
             <input v-model="form.password" type="password" placeholder="至少 8 位" />
@@ -283,5 +314,15 @@ onMounted(load)
   margin-left: 6px;
   color: var(--muted);
   font-size: 12px;
+}
+
+.admin-tag {
+  margin-left: 3px;
+  padding: 0 4px;
+  font-style: normal;
+  font-size: 11px;
+  color: var(--brand);
+  background: #eef2fb;
+  border-radius: 3px;
 }
 </style>

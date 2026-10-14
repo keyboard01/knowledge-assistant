@@ -16,15 +16,17 @@ import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
 import io.github.keyboard01.assistant.security.AclRule;
-import io.github.keyboard01.assistant.security.RequireRole;
+import io.github.keyboard01.assistant.security.CurrentUser;
 
 /**
- * 工作区(知识域)级授权的管理接口（admin）：谁能看哪个域。
+ * 工作区(知识域)级授权的管理接口：谁能看哪个域。
  * 权限本身不走前端——前端提交的是"授权规则"，可见范围仍由服务端按规则判定。
+ *
+ * <p>多项目接入 S3 起不再用类级 `@RequireRole("admin")`：平台管理员与**该域的租户管理员**
+ * 都能管，判定统一落在 {@code DomainService.canAdminister}（按域的租户判）。</p>
  */
 @RestController
 @RequestMapping("/api/admin/domains")
-@RequireRole("admin")
 public class AdminDomainAclController {
 
     public record AclRuleDto(String subjectType, String subjectValue, String permission) {
@@ -43,10 +45,11 @@ public class AdminDomainAclController {
 
     @GetMapping("/{code}/acl")
     public Map<String, Object> list(@PathVariable String code) {
-        return Map.of("rules", service.listAcl(code).stream().map(AdminDomainAclController::toDto).toList());
+        return Map.of("rules", service.listAcl(CurrentUser.subject(), code).stream()
+                .map(AdminDomainAclController::toDto).toList());
     }
 
-    /** 整份替换：提交什么就是什么（空列表 = 只有 admin 可见）。 */
+    /** 整份替换：提交什么就是什么（空列表 = 只有管理员可见）。 */
     @PutMapping("/{code}/acl")
     public Map<String, Object> replace(@PathVariable String code, @RequestBody AclRulesRequest request) {
         List<AclRule> rules = new ArrayList<>();
@@ -65,7 +68,7 @@ public class AdminDomainAclController {
                 rules.add(new AclRule(type, value, AclRule.READ));
             }
         }
-        return Map.of("rules", service.replaceAcl(code, rules).stream()
+        return Map.of("rules", service.replaceAcl(CurrentUser.subject(), code, rules).stream()
                 .map(AdminDomainAclController::toDto).toList());
     }
 

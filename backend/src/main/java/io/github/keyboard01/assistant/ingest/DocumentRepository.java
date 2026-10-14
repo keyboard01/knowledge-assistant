@@ -69,8 +69,9 @@ public class DocumentRepository {
     /**
      * 文档列表（先过域级 + 文档级 ACL）。
      *
-     * <p>非管理员再收窄一层：只看到"现行 + 自己上传的草案"——别人的未审草案不该在列表里露出，
-     * 但本人要能看到自己刚交的东西。管理员看全部，否则无法在列表里审核。</p>
+     * <p>非平台管理员再收窄一层：只看到"现行 + 自己上传的草案 + 自己管理的租户里的所有文档"。
+     * 最后一项是多项目接入 S3 加的——租户管理员要能看到自己租户里的待审草案才能审核；
+     * 对普通用户，那条 exists 恒为假，等于没有。</p>
      */
     public List<Row> findVisible(AccessFilter filter, String viewerUsername, boolean admin) {
         String order = " order by d.domain_code, d.doc_no, d.version";
@@ -78,9 +79,16 @@ public class DocumentRepository {
             return jdbc.query("select " + COLUMNS + " from document d where " + filter.sql() + order,
                     MAPPER, filter.paramsArray());
         }
-        Object[] params = append(filter.paramsArray(), viewerUsername);
-        return jdbc.query("select " + COLUMNS + " from document d where " + filter.sql()
-                + " and (" + DocumentVisibility.currentSql("d") + " or d.uploaded_by = ?)" + order,
+        Object[] params = append(append(filter.paramsArray(), viewerUsername), viewerUsername);
+        return jdbc.query("""
+                select %s from document d where %s
+                  and (%s or d.uploaded_by = ?
+                   or exists (select 1 from tenant_member tm
+                               join app_user tu on tu.id = tm.user_id
+                               join knowledge_domain kd on kd.code = d.domain_code
+                              where tu.username = ? and tm.role = 'admin' and tm.tenant_code = kd.tenant_code))
+                %s
+                """.formatted(COLUMNS, filter.sql(), DocumentVisibility.currentSql("d"), order),
                 MAPPER, params);
     }
 

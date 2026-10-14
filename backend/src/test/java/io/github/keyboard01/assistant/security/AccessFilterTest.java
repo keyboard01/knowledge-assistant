@@ -62,8 +62,28 @@ class AccessFilterTest {
     void sqlBindsParametersInsteadOfInterpolating() {
         AccessFilter filter = AccessFilter.of(AccessSubject.of("o'brien", "viewer", "finance"), "d");
         assertFalse(filter.sql().contains("o'brien"), "用户名不得出现在 SQL 文本里");
-        assertEquals(List.of("viewer", "o'brien", "finance"), filter.params());
+        // 第 4 个 o'brien 是租户谓词的参数（同一个用户名绑两次：一次判文档 ACL，一次判租户归属）
+        assertEquals(List.of("viewer", "o'brien", "finance", "o'brien"), filter.params());
         assertEquals(filter.params().size(), filter.sql().split("\\?", -1).length - 1);
+    }
+
+    @Test
+    @DisplayName("租户谓词：普通身份下推，平台管理员不下推（跨租户可见）")
+    void tenantPredicateIsPushedDownUnlessAdmin() {
+        AccessFilter demo = AccessFilter.of(DEMO, "d");
+        assertTrue(demo.sql().contains("tenant_member"), "普通身份必须带租户谓词：" + demo.sql());
+        assertTrue(demo.sql().contains("d.domain_code"), "租户谓词要按文档所属域判定：" + demo.sql());
+        assertEquals("demo", demo.params().get(demo.params().size() - 1));
+
+        AccessFilter admin = AccessFilter.of(ADMIN, "d");
+        assertFalse(admin.sql().contains("tenant_member"), "平台管理员跨租户，不该带租户谓词：" + admin.sql());
+        assertFalse(admin.sql().contains("o'brien"));
+    }
+
+    @Test
+    @DisplayName("租户谓词用别名解耦：换 document 别名时条件跟着换，不会写死 'd'")
+    void tenantPredicateFollowsAlias() {
+        assertTrue(AccessFilter.of(DEMO, "doc").sql().contains("doc.domain_code"));
     }
 
     @Test

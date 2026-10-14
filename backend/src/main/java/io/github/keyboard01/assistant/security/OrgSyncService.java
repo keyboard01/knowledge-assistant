@@ -14,6 +14,8 @@ import org.slf4j.LoggerFactory;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 
+import io.github.keyboard01.assistant.tenant.TenantRepository;
+
 import io.github.keyboard01.assistant.adapters.dingtalk.DingTalkApi;
 
 /**
@@ -35,10 +37,12 @@ public class OrgSyncService {
 
     private final DingTalkApi api;
     private final UserRepository users;
+    private final TenantRepository tenants;
 
-    public OrgSyncService(DingTalkApi api, UserRepository users) {
+    public OrgSyncService(DingTalkApi api, UserRepository users, TenantRepository tenants) {
         this.api = api;
         this.users = users;
+        this.tenants = tenants;
     }
 
     public SyncResult sync(DingTalkConfig cfg) {
@@ -93,8 +97,12 @@ public class OrgSyncService {
                 updated++;
             } else {
                 try {
-                    users.insertExternal(upsert.username(), upsert.displayName(), upsert.roleCode(),
+                    long newId = users.insertExternal(upsert.username(), upsert.displayName(), upsert.roleCode(),
                             upsert.deptCode(), OrgSyncPlan.SOURCE, upsert.externalId(), upsert.enabled());
+                    // 同步出来的账号也要有租户归属，否则它能登录却看不到任何知识域。
+                    // 这里先统一落默认租户——"按组织/部门映射到哪个租户"需要租户管理（S4）才能配，
+                    // 在那之前给它一个确定但不越界的归属（默认租户就是升级前全体账号所在的那一个）。
+                    tenants.ensureMembership(newId, TenantRepository.DEFAULT_TENANT, "member");
                     created++;
                 } catch (DuplicateKeyException ex) {
                     skipped++;
@@ -128,6 +136,8 @@ public class OrgSyncService {
         long id = users.insertExternal(username, display(ding, username),
                 OrgSyncPlan.roleOrDefault(cfg.defaultRole()), ding.deptId(), OrgSyncPlan.SOURCE, ding.userId(),
                 ding.active());
+        // 同 sync()：免登建出来的账号也要有租户归属，否则登录成功却什么都看不到
+        tenants.ensureMembership(id, TenantRepository.DEFAULT_TENANT, "member");
         return users.findById(id).orElseThrow(() -> new IllegalStateException("建号后读取失败"));
     }
 

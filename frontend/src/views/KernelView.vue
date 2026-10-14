@@ -2,6 +2,11 @@
 import { onMounted, ref } from 'vue'
 import { domainsApi } from '../api/client.js'
 
+// tenantAdmin=true 时（多项目接入 S3）：建域只能落在自己管理的租户，后端兜底校验。
+const props = defineProps({
+  tenantAdmin: { type: Boolean, default: false }
+})
+
 const domains = ref([])
 const check = ref(null)
 const busy = ref('')
@@ -28,7 +33,7 @@ const formBusy = ref('')
 const formError = ref('')
 
 function openCreate() {
-  editing.value = { mode: 'create', code: '', name: '', description: '' }
+  editing.value = { mode: 'create', code: '', name: '', description: '', tenantCode: '' }
   formError.value = ''
 }
 
@@ -52,7 +57,8 @@ async function submitForm() {
       await domainsApi.create({
         code: form.code,
         name: form.name,
-        description: form.description
+        description: form.description,
+        tenantCode: form.tenantCode
       })
       notice.value = `已新建知识域 ${form.code}`
     } else {
@@ -165,13 +171,14 @@ onMounted(refresh)
       <table class="grid">
         <thead>
           <tr>
-            <th>代码</th><th>名称</th><th>可见文档</th><th>状态</th><th>操作</th>
+            <th>代码</th><th>名称</th><th>租户</th><th>可见文档</th><th>状态</th><th>操作</th>
           </tr>
         </thead>
         <tbody>
           <tr v-for="domain in domains" :key="domain.code">
             <td><code>{{ domain.code }}</code></td>
             <td>{{ domain.name }}</td>
+            <td><span class="tag">{{ domain.tenantCode }}</span></td>
             <td :title="'当前账号可见的文档数（只算你看得到的）'">{{ domain.visibleDocuments }}</td>
             <td>{{ domain.enabled ? '启用' : '停用' }}</td>
             <td class="row-actions">
@@ -211,6 +218,11 @@ onMounted(refresh)
           <label class="field">
             <span>描述</span>
             <input v-model="editing.description" placeholder="可选" />
+          </label>
+          <!-- 租户只在新建时可指定：建好之后再换租户等于搬家，会把可见性作用域整块挪走 -->
+          <label v-if="editing.mode === 'create'" class="field">
+            <span>租户 <em>{{ props.tenantAdmin ? '留空 = 你管理的租户' : '留空 = 默认租户' }}</em></span>
+            <input v-model="editing.tenantCode" :placeholder="props.tenantAdmin ? '你管理的租户' : 'default'" />
           </label>
           <label v-if="editing.mode === 'edit'" class="field inline">
             <input type="checkbox" v-model="editing.enabled" /> 启用

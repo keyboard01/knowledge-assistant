@@ -23,11 +23,18 @@ import org.springframework.web.bind.annotation.RestController;
 @RequireRole("admin")
 public class AdminUserController {
 
+    /**
+     * 建号载荷。{@code tenantCodes} 决定这人能看哪些知识域；{@code adminTenantCodes}（其子集）
+     * 决定他在哪些租户里是管理员。都留空落默认租户。
+     */
     public record CreateUserRequest(String username, String displayName, String roleCode, String deptCode,
-                                    String password) {
+                                    String password, java.util.List<String> tenantCodes,
+                                    java.util.List<String> adminTenantCodes) {
     }
 
-    public record UpdateUserRequest(String displayName, String roleCode, String deptCode, Boolean enabled) {
+    /** 改号载荷；{@code tenantCodes} 为 null 表示"不动归属"，给了就整份替换（adminTenantCodes 随之）。 */
+    public record UpdateUserRequest(String displayName, String roleCode, String deptCode, Boolean enabled,
+                                    java.util.List<String> tenantCodes, java.util.List<String> adminTenantCodes) {
     }
 
     public record ResetPasswordRequest(String newPassword) {
@@ -41,7 +48,7 @@ public class AdminUserController {
 
     @GetMapping("/users")
     public Map<String, Object> list() {
-        return Map.of("users", service.list());
+        return Map.of("users", service.list(), "tenants", service.listTenants());
     }
 
     @GetMapping("/roles")
@@ -52,12 +59,13 @@ public class AdminUserController {
     @PostMapping("/users")
     public AuthService.UserView create(@RequestBody CreateUserRequest request) {
         return service.create(request.username(), request.displayName(), request.roleCode(), request.deptCode(),
-                request.password());
+                request.password(), request.tenantCodes(), request.adminTenantCodes());
     }
 
     @PutMapping("/users/{id}")
     public AuthService.UserView update(@PathVariable long id, @RequestBody UpdateUserRequest request) {
-        return service.update(id, request.displayName(), request.roleCode(), request.deptCode(), request.enabled());
+        return service.update(id, request.displayName(), request.roleCode(), request.deptCode(), request.enabled(),
+                request.tenantCodes(), request.adminTenantCodes());
     }
 
     @PostMapping("/users/{id}/password")
