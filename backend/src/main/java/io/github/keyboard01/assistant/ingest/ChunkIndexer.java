@@ -57,7 +57,7 @@ public class ChunkIndexer {
     public IndexResult index(long documentId, String documentTitle, Path file, boolean force)
             throws IOException, InterruptedException {
         if (!parser.supports(file)) {
-            return new IndexResult(documentId, "SKIPPED", 0, "该格式暂不支持自建解析（只做 PDF / DOCX）");
+            return new IndexResult(documentId, "SKIPPED", 0, "该格式暂不支持自建解析（只做 PDF / DOCX / PPTX / XLSX）");
         }
         List<ParsedBlock> blocks = parser.parse(file).blocks();
         List<ParsedChunk> parsed = ChunkSplitter.split(blocks, chunking.options());

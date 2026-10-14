@@ -74,6 +74,6 @@ class ObserveServiceTest {
     private static GeneratedAnswer answer(int promptTokens, int completionTokens) {
         return new GeneratedAnswer("答案", List.of(), false, null, null, List.of(),
                 new GenerationDiagnostics("test-model", true, 1, 1, List.of(), promptTokens, completionTokens,
-                        null, false, 120L));
+                        null, false, 120L), null);
     }
 }

@@ -199,9 +199,10 @@ public class IngestService {
         String version = require(request.version(), "版本号不能为空");
         String extension = extension(request.originalFilename());
         boolean image = DocKind.ofName(request.originalFilename()) == DocKind.IMAGE;
-        if (!image && !".pdf".equals(extension) && !".docx".equals(extension) && !".pptx".equals(extension)) {
+        if (!image && !".pdf".equals(extension) && !".docx".equals(extension) && !".pptx".equals(extension)
+                && !".xlsx".equals(extension)) {
             throw new IllegalArgumentException(
-                    "只支持 PDF / DOCX / PPTX / 图片（png/jpg/jpeg/gif/bmp）（当前：" + extension + "）");
+                    "只支持 PDF / DOCX / PPTX / XLSX / 图片（png/jpg/jpeg/gif/bmp）（当前：" + extension + "）");
         }
         if (request.content() == null || request.content().length == 0) {
             throw new IllegalArgumentException("上传的文件为空");

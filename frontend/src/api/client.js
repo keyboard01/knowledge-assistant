@@ -353,5 +353,27 @@ export const observeApi = {
     return request(`/observe/traces?${query.toString()}`)
   },
   detail: (id) => request(`/observe/traces/${id}`),
-  price: () => request('/observe/price')
+  price: () => request('/observe/price'),
+  // 反馈：提交不限管理员（只能评自己的问答，后端按账本归属判），读汇总仍是管理员
+  feedback: (traceId, payload) => request(`/observe/traces/${traceId}/feedback`, {
+    method: 'POST',
+    body: JSON.stringify(payload)
+  }),
+  feedbackReasons: () => request('/observe/feedback/reasons'),
+  feedbackSummary: () => request('/observe/feedback/summary')
+}
+
+/** 评测（P3）。限管理员：跑一次要花模型钱，指标属运维面。 */
+export const evalApi = {
+  runs: ({ limit = 20, set = '' } = {}) => {
+    const query = new URLSearchParams({ limit: String(limit) })
+    if (set) query.set('set', set)
+    return request(`/eval/runs?${query.toString()}`)
+  },
+  detail: (id) => request(`/eval/runs/${id}`),
+  // 同步执行：retrieval 秒级，full 要几分钟（30 题 × 一道问答）
+  run: (set, mode) => request('/eval/runs', {
+    method: 'POST',
+    body: JSON.stringify({ set, mode })
+  })
 }

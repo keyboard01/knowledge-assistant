@@ -197,15 +197,19 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 24px;
+  padding: 12px;
   z-index: 50;
 }
 
 .modal {
   background: #fff;
   border-radius: 10px;
-  width: min(1000px, 100%);
-  height: min(88vh, 100%);
+  /* 近全屏：PPT/大文档在小弹窗里根本没法看（overlay 12px + 这里减 24px）。
+     max-width 必须显式放开——styles.css 里的通用 .modal 是 560px，scoped 规则只改 width
+     盖不住它，结果是"改了宽度但弹窗纹丝不动"。 */
+  width: calc(100vw - 24px);
+  max-width: none;
+  height: calc(100vh - 24px);
   display: flex;
   flex-direction: column;
   overflow: hidden;

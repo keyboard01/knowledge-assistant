@@ -4,6 +4,7 @@ import SettingsView from '../views/SettingsView.vue'
 import KernelView from '../views/KernelView.vue'
 import IngestView from '../views/IngestView.vue'
 import ObserveView from '../views/ObserveView.vue'
+import EvalView from '../views/EvalView.vue'
 import LoginView from '../views/LoginView.vue'
 import UsersView from './views/UsersView.vue'
 import DomainAccessView from './views/DomainAccessView.vue'
@@ -74,6 +75,7 @@ onMounted(loadUser)
         <span :class="{ active: view === 'access' }" @click="view = 'access'">工作区授权</span>
         <span :class="{ active: view === 'apiaccess' }" @click="view = 'apiaccess'">对外接入</span>
         <span :class="{ active: view === 'observe' }" @click="view = 'observe'">运行记录</span>
+        <span :class="{ active: view === 'eval' }" @click="view = 'eval'">评测</span>
         <span :class="{ active: view === 'settings' }" @click="view = 'settings'">系统配置</span>
       </nav>
       <div class="who">
@@ -89,6 +91,7 @@ onMounted(loadUser)
       <DomainAccessView v-else-if="view === 'access'" />
       <ApiAccessView v-else-if="view === 'apiaccess'" />
       <ObserveView v-else-if="view === 'observe'" />
+      <EvalView v-else-if="view === 'eval'" />
       <SettingsView v-else />
     </main>
   </div>

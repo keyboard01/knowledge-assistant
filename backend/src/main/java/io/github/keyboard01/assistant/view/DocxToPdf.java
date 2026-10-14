@@ -1,13 +1,17 @@
 package io.github.keyboard01.assistant.view;
 
+import java.awt.image.BufferedImage;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
+
+import javax.imageio.ImageIO;
 
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.pdmodel.PDPage;
@@ -16,6 +20,9 @@ import org.apache.pdfbox.pdmodel.common.PDRectangle;
 import org.apache.pdfbox.pdmodel.font.PDFont;
 import org.apache.pdfbox.pdmodel.font.PDType0Font;
 import org.apache.pdfbox.pdmodel.font.PDType1Font;
+import org.apache.pdfbox.pdmodel.graphics.image.JPEGFactory;
+import org.apache.pdfbox.pdmodel.graphics.image.LosslessFactory;
+import org.apache.pdfbox.pdmodel.graphics.image.PDImageXObject;
 
 import io.github.keyboard01.assistant.view.DocumentViewModels.Block;
 
@@ -50,7 +57,20 @@ public final class DocxToPdf {
     private DocxToPdf() {
     }
 
+    /**
+     * 要画进重排 PDF 的一张图片（sidecar：不进 chunk 正文，只在渲染时按页码插回）。
+     * {@code page} 是幻灯片号（与块的 pageFrom 同一坐标系）；DOCX 没有页码语义，给 null 排到文档末尾。
+     */
+    public record SlideImage(Integer page, byte[] bytes, String ext, int width, int height) {
+    }
+
     public static byte[] render(String title, String docNo, String version, List<Block> blocks)
+            throws IOException {
+        return render(title, docNo, version, blocks, List.of());
+    }
+
+    public static byte[] render(String title, String docNo, String version, List<Block> blocks,
+                                List<SlideImage> images)
             throws IOException {
         try (PDDocument document = new PDDocument()) {
             byte[] fontBytes = fontBytes();
@@ -81,7 +101,12 @@ public final class DocxToPdf {
             }
             cursor.gap(8f);
 
-            for (Block block : blocks) {
+            for (Object item : interleave(blocks, images)) {
+                if (item instanceof SlideImage image) {
+                    drawImage(cursor, document, image);
+                    continue;
+                }
+                Block block = (Block) item;
                 String text = block.text();
                 if (text == null || text.isBlank()) {
                     continue;
@@ -111,6 +136,79 @@ public final class DocxToPdf {
             document.save(out);
             return out.toByteArray();
         }
+    }
+
+    /**
+     * 块与图片的交错顺序：某页的图片插在"页码比它大的第一个文本块"之前——
+     * 即跟在该幻灯片文本之后、下一张幻灯片之前。纯图片幻灯片（没有文本块）的图片
+     * 会在下一个更大页码的块之前被冲出来，位置不丢。没有页码的图片（DOCX）排到末尾。
+     * 纯函数，供单测直接断言顺序。
+     */
+    static List<Object> interleave(List<Block> blocks, List<SlideImage> images) {
+        List<SlideImage> sorted = new ArrayList<>(images);
+        sorted.sort(Comparator.comparing(DocxToPdf::effectivePage));
+        List<Object> merged = new ArrayList<>(blocks.size() + sorted.size());
+        int next = 0;
+        for (Block block : blocks) {
+            Integer page = block.pageFrom();
+            if (page != null) {
+                while (next < sorted.size() && effectivePage(sorted.get(next)) < page) {
+                    merged.add(sorted.get(next++));
+                }
+            }
+            merged.add(block);
+        }
+        while (next < sorted.size()) {
+            merged.add(sorted.get(next++));
+        }
+        return merged;
+    }
+
+    private static int effectivePage(SlideImage image) {
+        return image.page() == null ? Integer.MAX_VALUE : image.page();
+    }
+
+    /** 画一张图：宽度铺满内容区等比缩放，超高再压到可用页高的 90%；放不下就换页。单张失败跳过，不挡整份 PDF。 */
+    private static void drawImage(Cursor cursor, PDDocument document, SlideImage image) {
+        try {
+            PDImageXObject xobject = toXObject(document, image);
+            if (xobject == null) {
+                return;
+            }
+            int sourceWidth = image.width() > 0 ? image.width() : xobject.getWidth();
+            int sourceHeight = image.height() > 0 ? image.height() : xobject.getHeight();
+            float width = cursor.contentWidth();
+            float height = sourceWidth > 0 ? width * sourceHeight / sourceWidth : width;
+            float maxHeight = cursor.usableHeight() * 0.9f;
+            if (height > maxHeight) {
+                height = maxHeight;
+                width = sourceHeight > 0 ? height * sourceWidth / sourceHeight : height;
+            }
+            cursor.image(xobject, width, height);
+        } catch (IOException | RuntimeException ex) {
+            org.slf4j.LoggerFactory.getLogger(DocxToPdf.class)
+                    .warn("[重排] 图片（页 {}，{} 字节）画不进去，已跳过：{}",
+                            image.page(), image.bytes() == null ? 0 : image.bytes().length, ex.getMessage());
+        }
+    }
+
+    /** JPEG 直走 DCT 不膨胀；其余光栅格式经 ImageIO 走无损嵌入，读不出来返回 null。 */
+    private static PDImageXObject toXObject(PDDocument document, SlideImage image) throws IOException {
+        String ext = image.ext() == null ? "" : image.ext().toLowerCase(Locale.ROOT);
+        if ("jpg".equals(ext) || "jpeg".equals(ext)) {
+            try {
+                return JPEGFactory.createFromByteArray(document, image.bytes());
+            } catch (IOException ex) {
+                // 扩展名说是 JPEG 但字节不是（降采样失败回退原字节时会出现），落到通用路径再试一次
+            }
+        }
+        BufferedImage buffered = ImageIO.read(new ByteArrayInputStream(image.bytes()));
+        if (buffered == null) {
+            org.slf4j.LoggerFactory.getLogger(DocxToPdf.class)
+                    .warn("[重排] 无法解码图片（页 {}，ext={}），跳过", image.page(), image.ext());
+            return null;
+        }
+        return LosslessFactory.createFromImage(document, buffered);
     }
 
     private static float headingSize(int level) {
@@ -202,6 +300,23 @@ public final class DocxToPdf {
             y -= size;
         }
 
+        float contentWidth() {
+            return pageWidth - MARGIN * 2;
+        }
+
+        float usableHeight() {
+            return pageHeight - MARGIN * 2;
+        }
+
+        /** 剩余高度放不下就换页；画完把游标下移（图底下留一点呼吸）。 */
+        void image(PDImageXObject xobject, float width, float height) throws IOException {
+            if (y - height < MARGIN) {
+                newPage();
+            }
+            content.drawImage(xobject, MARGIN, y - height, width, height);
+            y -= height + 6f;
+        }
+
         void write(String text, float size, float gap, int red, int green, int blue)
                 throws IOException {
             write(text, size, gap, red, green, blue, 0f);
@@ -218,10 +333,33 @@ public final class DocxToPdf {
                 content.setNonStrokingColor(red, green, blue);
                 content.setFont(font, size);
                 content.newLineAtOffset(MARGIN + indent, y - size);
-                content.showText(line);
+                content.showText(encodable(line));
                 content.endText();
                 y -= lineHeight;
             }
+        }
+
+        /**
+         * 去掉当前字体没有字形的字符。PDFBox 的 {@code showText} 遇到没字形的字会**直接抛异常**，
+         * 结果是整份「原文」打不开——一个 U+FFFD（上游编码出错留下的替换符）或一个生僻字就够了。
+         * 丢一个字符与整页看不到，代价完全不对等，所以这里与"没有中文字体时丢非 ASCII"取同一条取向：
+         * 能显示多少显示多少。
+         */
+        private String encodable(String line) {
+            if (line == null || line.isEmpty()) {
+                return "";
+            }
+            StringBuilder builder = new StringBuilder(line.length());
+            for (int i = 0; i < line.length(); i++) {
+                char c = line.charAt(i);
+                try {
+                    font.getStringWidth(String.valueOf(c));
+                    builder.append(c);
+                } catch (IOException | IllegalArgumentException ex) {
+                    // 字体没有这个字形：跳过
+                }
+            }
+            return builder.toString();
         }
 
         void finish() throws IOException {

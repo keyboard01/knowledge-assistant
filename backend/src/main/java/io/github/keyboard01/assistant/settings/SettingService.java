@@ -34,6 +34,7 @@ public class SettingService {
     public static final String GROUP_DINGTALK = "dingtalk";
     public static final String GROUP_VISION = "vision";
     public static final String GROUP_IMAGE_EMBEDDING = "image_embedding";
+    public static final String GROUP_EVAL = "eval";
 
     private record GroupDef(String code, String title, String description, List<FieldDef> fields) {
     }
@@ -152,7 +153,16 @@ public class SettingService {
                         new FieldDef("apiKey", "API Key", true, "百炼控制台申请；只保存在服务端", ""),
                         new FieldDef("model", "模型名", false,
                                 "多模态向量模型，默认 qwen2.5-vl-embedding（1024 维，与库内固定维度一致）",
-                                "qwen2.5-vl-embedding"))));
+                                "qwen2.5-vl-embedding"))));        GROUPS.put(GROUP_EVAL, new GroupDef(GROUP_EVAL, "评测",
+                "离线评测题集与默认模式。题集是从磁盘读的 JSON（见 tools/questions/），"
+                        + "跑一次不改动检索参数，只是把结果记下来供对比。",
+                List.of(
+                        new FieldDef("questionDir", "题集目录", false,
+                                "相对项目根目录，或绝对路径；只认该目录下的 .json（文件名即题集名）",
+                                "tools/questions"),
+                        new FieldDef("defaultMode", "默认模式", false,
+                                "retrieval = 只跑检索，秒级且不花生成费用；full = 全链路（会真调模型）",
+                                "retrieval"))));
     }
 
     private final SettingRepository repository;

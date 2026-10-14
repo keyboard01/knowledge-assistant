@@ -5,7 +5,7 @@ import java.util.Locale;
 import java.util.Set;
 
 /**
- * 文档类型。`TEXT` = 走解析→chunk→内核的文本文档（PDF/DOCX）；
+ * 文档类型。`TEXT` = 走解析→chunk→知识库的文本文档（PDF/DOCX/PPTX/XLSX）；
  * `IMAGE` = 直接上传的图片（不入内核、不产 chunk，只产出图片资产）。
  */
 public enum DocKind {

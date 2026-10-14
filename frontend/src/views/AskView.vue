@@ -2,7 +2,7 @@
 // 问答页：选知识域 → 提问 → 流式看答案 → 点引用跳原文。
 // 两条铁律：只有 verdict.refused=false 才把正文当结论；notice 必须显示出来。
 import { computed, nextTick, onMounted, ref } from 'vue'
-import { deepApi, domainsApi, generationApi, newRunId } from '../api/client.js'
+import { deepApi, domainsApi, generationApi, newRunId, observeApi } from '../api/client.js'
 import { pageLabel } from '../format.js'
 import DocumentViewer from './DocumentViewer.vue'
 
@@ -16,6 +16,15 @@ const evidences = ref([])
 const error = ref('')
 const showEvidence = ref(false)
 const activeRank = ref(null)
+
+// 反馈（P3）：只有拿到 traceId 才能评价——评价要挂回"具体这一次问答"，
+// 只按问题原文匹配的话，重复提问就分不清是哪一次了（traceId 由服务端随答案一起回传）。
+const feedbackState = ref('idle') // idle | open | sending | done
+const feedbackRating = ref(0)
+const feedbackReason = ref('')
+const feedbackComment = ref('')
+const feedbackError = ref('')
+const feedbackReasons = ref([])
 
 // 深度分析（P3a）：多轮检索 + 分步作答，探索过程也显示出来。
 // 结论仍然只认 verdict 事件——分步场景下，中途流出来的正文可能来自"某一段后来被拒"的那次生成。
@@ -108,6 +117,51 @@ function reset() {
   steps.value = []
   budget.value = ''
   cancelNote.value = ''
+  resetFeedback()
+}
+
+function resetFeedback() {
+  feedbackState.value = 'idle'
+  feedbackRating.value = 0
+  feedbackReason.value = ''
+  feedbackComment.value = ''
+  feedbackError.value = ''
+}
+
+/** 点赞：直接提交；点踩：先选原因（原因清单由服务端提供，前后端不各写一份枚举）。 */
+async function rate(rating) {
+  if (rating === -1) {
+    feedbackState.value = 'open'
+    return
+  }
+  await sendFeedback(1, '', '')
+}
+
+async function sendFeedback(rating, reason, comment) {
+  const traceId = result.value?.traceId
+  if (!traceId) {
+    feedbackError.value = '这次问答没有账本记录号，无法提交反馈'
+    return
+  }
+  feedbackState.value = 'sending'
+  feedbackError.value = ''
+  try {
+    await observeApi.feedback(traceId, { rating, reason: reason || null, comment: comment || null })
+    feedbackRating.value = rating
+    feedbackState.value = 'done'
+  } catch (e) {
+    feedbackState.value = rating === -1 ? 'open' : 'idle'
+    feedbackError.value = e.message
+  }
+}
+
+async function loadFeedbackReasons() {
+  try {
+    feedbackReasons.value = (await observeApi.feedbackReasons()).reasons || []
+  } catch {
+    // 拿不到就不显示 chips，但不该因为一个辅助接口让问答页报错
+    feedbackReasons.value = []
+  }
 }
 
 async function ask() {
@@ -258,7 +312,10 @@ function isCitedChunk(chunkId) {
   return (result.value?.citations || []).some((c) => c.chunkId === chunkId)
 }
 
-onMounted(loadDomains)
+onMounted(() => {
+  loadDomains()
+  loadFeedbackReasons()
+})
 </script>
 
 <template>
@@ -377,6 +434,47 @@ onMounted(loadDomains)
       </p>
 
       <p v-if="result?.notice" class="banner warn">{{ result.notice }}</p>
+
+      <!-- 反馈：赞/踩挂回账本（traceId）。没有 traceId（账本写失败）时按钮不出现，
+           宁可不给评价入口，也不要提交一条找不到归属的评价。 -->
+      <div v-if="result && result.traceId" class="feedback">
+        <template v-if="feedbackState === 'done'">
+          <span class="fb-done">{{ feedbackRating === 1 ? '已记录：这条回答有用' : '已记录：这条回答没用，谢谢指出' }}</span>
+        </template>
+        <template v-else>
+          <span class="fb-label">这条回答：</span>
+          <button class="btn tiny" :disabled="feedbackState === 'sending'" @click="rate(1)">👍 有用</button>
+          <button
+            class="btn tiny"
+            :class="{ active: feedbackState === 'open' }"
+            :disabled="feedbackState === 'sending'"
+            @click="rate(-1)"
+          >👎 没用</button>
+          <span v-if="feedbackState === 'sending'" class="fb-hint">提交中…</span>
+        </template>
+
+        <div v-if="feedbackState === 'open'" class="fb-panel">
+          <div class="fb-reasons">
+            <span class="fb-hint">哪里不对：</span>
+            <button
+              v-for="r in feedbackReasons"
+              :key="r"
+              class="chip"
+              :class="{ active: feedbackReason === r }"
+              @click="feedbackReason = r"
+            >{{ r }}</button>
+          </div>
+          <div class="fb-submit">
+            <input v-model="feedbackComment" maxlength="500" placeholder="补充说明（可选）" />
+            <button
+              class="btn tiny primary"
+              :disabled="!feedbackReason || feedbackState === 'sending'"
+              @click="sendFeedback(-1, feedbackReason, feedbackComment)"
+            >提交</button>
+          </div>
+        </div>
+        <p v-if="feedbackError" class="fb-err">{{ feedbackError }}</p>
+      </div>
 
       <div v-if="result && !refused && result.citations.length" class="citations">
         <div
@@ -570,4 +668,46 @@ onMounted(loadDomains)
 
 .frag:last-child { margin-bottom: 0; }
 .frag.hit { background: #fff6d9; border: 1px solid #f0dcae; }
+
+/* 反馈条：轻量一行，别喧宾夺主——它的作用是"顺手留个信号"，不是让用户填表 */
+.feedback {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 12px 0 0;
+  padding-top: 10px;
+  border-top: 1px dashed var(--line);
+}
+
+.fb-label { font-size: 12.5px; color: var(--muted); }
+.fb-hint { font-size: 12px; color: var(--muted); }
+.fb-done { font-size: 12.5px; color: var(--ok); }
+.fb-err { margin: 4px 0 0; font-size: 12.5px; color: var(--err); }
+
+.fb-panel { flex-basis: 100%; margin-top: 8px; }
+.fb-reasons { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+
+.chip {
+  font-size: 12px;
+  color: var(--muted);
+  background: #f1f4f9;
+  border: 1px solid transparent;
+  border-radius: 12px;
+  padding: 2px 10px;
+  cursor: pointer;
+}
+
+.chip.active { color: var(--brand); border-color: var(--brand); background: #eef2fb; font-weight: 600; }
+
+.fb-submit { display: flex; gap: 8px; margin-top: 8px; }
+
+.fb-submit input {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 8px;
+  font-size: 12.5px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
 </style>

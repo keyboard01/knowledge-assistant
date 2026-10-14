@@ -91,20 +91,23 @@ public class GenerationService {
                         called ? completion.completionTokens() : 0,
                         elapsedMs));
         logAnswer(subject, domainCode, question, answer, modelText);
-        recordTrace(subject, domainCode, question, retrieval, answer);
-        return answer;
+        // 账本行号回填进答案：前端要靠它把点赞挂回这一次问答（见 GeneratedAnswer.traceId）
+        return answer.withTraceId(recordTrace(subject, domainCode, question, retrieval, answer));
     }
 
     /**
      * 落运行记录（T10）。**账本写失败不能让问答失败**：答案已经算出来了，
      * 因为记账出问题就把它丢掉，是本末倒置。失败了留一条 error 日志，账缺一条能查出来。
+     *
+     * <p>返回账本行号；写失败返回 {@code null}——那时答案照发，只是没有 traceId（前端会禁用点赞）。</p>
      */
-    private void recordTrace(AccessSubject subject, String domainCode, String question,
+    private Long recordTrace(AccessSubject subject, String domainCode, String question,
                              RetrievalResult retrieval, GeneratedAnswer answer) {
         try {
-            observeService.record(subject, domainCode, question, retrieval, answer);
+            return observeService.record(subject, domainCode, question, retrieval, answer).orElse(null);
         } catch (RuntimeException ex) {
             log.error("运行记录写入失败（本次问答不受影响）：domain={} question=\"{}\"", domainCode, question, ex);
+            return null;
         }
     }
 

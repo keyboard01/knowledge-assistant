@@ -28,7 +28,7 @@ public class QaTraceRepository {
     private static final String ROW_COLUMNS = """
             id, created_at, user_name, domain_code, question, refused, refusal_rule, insufficient,
             evidence_count, cited_count, best_score, model_called, prompt_tokens, completion_tokens,
-            total_elapsed_ms, cost_total
+            total_elapsed_ms, cost_total, rating, feedback_reason
             """;
 
     private static final RowMapper<TraceRow> ROW_MAPPER = (rs, rowNum) -> new TraceRow(
@@ -50,7 +50,10 @@ public class QaTraceRepository {
             rs.getInt("completion_tokens"),
             rs.getLong("total_elapsed_ms"),
             rs.getBigDecimal("cost_total"),
-            rs.getBigDecimal("cost_total") != null);
+            rs.getBigDecimal("cost_total") != null,
+            // smallint 用 getObject 取可空值：getInt 会把 null 读成 0，而 0 不是"赞"也不是"踩"
+            (Integer) rs.getObject("rating"),
+            rs.getString("feedback_reason"));
 
     private final JdbcTemplate jdbc;
 
@@ -254,6 +257,51 @@ public class QaTraceRepository {
 
     private static Double toDouble(BigDecimal value) {
         return value == null ? null : value.doubleValue();
+    }
+
+    /** 这条账本是谁提的问。反馈要判归属，只取一列，不必把整条明细读出来。 */
+    public Optional<String> findAsker(long id) {
+        return jdbc.query("select user_name from qa_trace where id = ?",
+                (rs, rowNum) -> rs.getString("user_name"), id).stream().findFirst();
+    }
+
+    /** 写反馈（同一行重复评价按最新覆盖）。返回受影响行数，0 表示账本行不存在。 */
+    public int updateFeedback(long id, int rating, String reason, String comment, String by) {
+        return jdbc.update("""
+                update qa_trace
+                   set rating = ?, feedback_reason = cast(? as varchar), feedback_comment = cast(? as text),
+                       feedback_at = now(), feedback_by = ?
+                 where id = ?
+                """, rating, reason, comment, by, id);
+    }
+
+    /** 反馈汇总：满意率的分母只算评过价的（见 {@link ObservationModels.FeedbackSummary}）。 */
+    public ObservationModels.FeedbackSummary feedbackSummary() {
+        return jdbc.queryForObject("""
+                select count(*) filter (where rating is not null) as rated,
+                       count(*) filter (where rating = 1)          as likes,
+                       count(*) filter (where rating = -1)         as dislikes
+                  from qa_trace
+                """, (rs, rowNum) -> {
+            long rated = rs.getLong("rated");
+            long likes = rs.getLong("likes");
+            return new ObservationModels.FeedbackSummary(rated, likes, rs.getLong("dislikes"),
+                    rated == 0 ? 0d : Math.round(likes * 10000d / rated) / 100d, feedbackReasons());
+        });
+    }
+
+    /** 差评原因分布。未评价的（rating is null）不进这张表，否则"其他"会被没评价的淹没。 */
+    private java.util.Map<String, Long> feedbackReasons() {
+        java.util.Map<String, Long> counts = new java.util.LinkedHashMap<>();
+        jdbc.query("""
+                select coalesce(feedback_reason, '未填原因') as reason, count(*) as total
+                  from qa_trace
+                 where rating = -1
+                 group by 1
+                 order by 2 desc
+                """, (rs, rowNum) -> java.util.Map.entry(rs.getString("reason"), rs.getLong("total")))
+                .forEach(entry -> counts.put(entry.getKey(), entry.getValue()));
+        return counts;
     }
 
     /** 越界引用按"1,3"存文本：它只在出问题时才有值，为它单开一列数组类型不值得。 */

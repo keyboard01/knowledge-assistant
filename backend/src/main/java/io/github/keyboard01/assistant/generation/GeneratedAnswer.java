@@ -18,9 +18,20 @@ import io.github.keyboard01.assistant.retrieval.Evidence;
  * <p>{@code evidences} 是本次实际喂给模型的证据（含片段原文），随答案一起返回，前端才能做到
  * "点引用跳原文并高亮"——只给一个 chunkId，前端还得再检索一次才能找到那段话，而且两次结果未必一致。
  * 内容都是本次检索已授权过的，不含额外信息。</p>
+ *
+ * <p>{@code traceId} 是这次问答在账本（{@code qa_trace}）里的行号。它在 {@code compose} 之后才产生
+ * （要先有答案才能记账），所以由 {@code GenerationService} 用 {@link #withTraceId} 回填。
+ * 前端的"点赞/点踩"与评测用例都要靠它把评价挂回**具体这一次**问答——只给问题原文，
+ * 遇到重复提问就分不清是哪一次了。</p>
  */
 public record GeneratedAnswer(String answer, List<Citation> citations, boolean refused, String refusalReason,
-                              String notice, List<Evidence> evidences, GenerationDiagnostics diagnostics) {
+                              String notice, List<Evidence> evidences, GenerationDiagnostics diagnostics,
+                              Long traceId) {
+
+    /** 记账之后回填 traceId（record 不可变，只能拷贝一份）。 */
+    public GeneratedAnswer withTraceId(Long id) {
+        return new GeneratedAnswer(answer, citations, refused, refusalReason, notice, evidences, diagnostics, id);
+    }
 
     /**
      * 一条引用：证据序号 + 定位信息。

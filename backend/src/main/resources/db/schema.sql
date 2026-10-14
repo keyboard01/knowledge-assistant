@@ -465,3 +465,83 @@ update qa_trace_evidence e
   from document_chunk c
  where e.chunk_index is null
    and e.chunk_id = c.id::text;
+
+-- P3：用户反馈闭环（赞/踩 + 原因标签）。挂在账本行上，而不是单独一张表：
+-- 一条问答本来就有一行账本，评价是它的一个属性；分成两张表之后，"这条评价对应哪次问答"
+-- 就得靠外键来回 join，而唯一键（trace_id）其实是 1:1。
+-- rating 允许 null（没评价）、1（赞）、-1（踩）——不设默认值，否则"没评"与"评了中立"分不开。
+alter table qa_trace add column if not exists rating smallint;
+comment on column qa_trace.rating is '用户反馈：1 赞 / -1 踩 / null 未评价';
+alter table qa_trace add column if not exists feedback_reason varchar(32);
+comment on column qa_trace.feedback_reason is '差评原因（只在 rating = -1 时填）：答非所问/引用不对/内容不全/已过期/其他';
+alter table qa_trace add column if not exists feedback_comment text;
+comment on column qa_trace.feedback_comment is '用户补充说明，≤500 字';
+alter table qa_trace add column if not exists feedback_at timestamptz;
+comment on column qa_trace.feedback_at is '最后一次评价时间；重复评价按最新覆盖';
+alter table qa_trace add column if not exists feedback_by varchar(64);
+comment on column qa_trace.feedback_by is '评价人（等于提问人，或管理员代评）';
+
+create index if not exists idx_qa_trace_rating on qa_trace (rating, created_at desc);
+
+-- P3：评测流水线。跑一次题集记一行 run，每题一行 case。
+-- 为什么落库而不是落文件：趋势要能查（"这次改动的 hit@k 比上次低了多少"），
+-- 回归门要能比（拿 run_id 当基线），管理端要能看 —— 三件事都指向"结构化存储"。
+create table if not exists eval_run (
+    id                  bigserial primary key,
+    created_at          timestamptz  not null default now(),
+    created_by          varchar(64)  not null,
+    question_set        varchar(64)  not null,
+    mode                varchar(16)  not null,
+    status              varchar(16)  not null,
+    total               int          not null default 0,
+    passed              int          not null default 0,
+    failed              int          not null default 0,
+    hit_at_k            numeric(5,4),
+    mrr                 numeric(5,4),
+    citation_accuracy   numeric(5,4),
+    refusal_accuracy    numeric(5,4),
+    leak_count          int          not null default 0,
+    avg_best_score      numeric(6,4),
+    avg_elapsed_ms      bigint       not null default 0,
+    prompt_tokens       bigint       not null default 0,
+    completion_tokens   bigint       not null default 0,
+    cost_total          numeric(14,6),
+    note                text,
+    finished_at         timestamptz
+);
+comment on table eval_run is '评测运行：一次题集跑分一行。mode = retrieval（只检索，不花生成钱）/ full（全链路）';
+comment on column eval_run.hit_at_k is '期望文档出现在证据里的比例（只对有 allowedDocNos 的题计）';
+comment on column eval_run.mrr is '首个期望文档的倒数名次均值；没命中的记 0';
+comment on column eval_run.leak_count is '权限题里被挡文档露出来的条数——不为 0 就是回归，回归门会直接失败';
+
+create index if not exists idx_eval_run_created on eval_run (created_at desc);
+create index if not exists idx_eval_run_set on eval_run (question_set, created_at desc);
+
+create table if not exists eval_case (
+    id               bigserial primary key,
+    run_id           bigint       not null references eval_run(id) on delete cascade,
+    case_id          varchar(16)  not null,
+    domain_code      varchar(32)  not null,
+    asker            varchar(64)  not null,
+    question         text         not null,
+    reasoning        varchar(32),
+    expected_outcome varchar(16)  not null,
+    actual_outcome   varchar(16)  not null,
+    ok               boolean      not null,
+    failure_reason   text,
+    leaked           boolean      not null default false,
+    citation_ok      boolean,
+    trace_id         bigint,
+    hit              boolean      not null default false,
+    doc_rank         int          not null default 0,
+    best_score       numeric(6,4),
+    expected_doc_nos text,
+    cited_doc_nos    text,
+    elapsed_ms       bigint       not null default 0
+);
+comment on table eval_case is '评测用例结果：期望 vs 实际 + 失败原因。失败原因按文本聚合，用来回答"这次为什么掉了"';
+comment on column eval_case.doc_rank is '首个期望文档在证据里的位次（1 起）；0 = 没命中';
+
+create index if not exists idx_eval_case_run on eval_case (run_id);
+create index if not exists idx_eval_case_failed on eval_case (run_id, ok);
+

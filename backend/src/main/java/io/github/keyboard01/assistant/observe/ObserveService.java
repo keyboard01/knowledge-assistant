@@ -80,6 +80,25 @@ public class ObserveService {
     }
 
     /**
+     * 一次问答的 token 与费用（评测汇总用）。
+     *
+     * <p>刻意不重新计算：账本里已经存了当时的 token 与按当时单价算出的费用，评测只是把它们加起来。
+     * 另算一份的话，"评测说花了 3 块钱、账本说花了 2 块 8"这种对不上的数字迟早会出现。</p>
+     */
+    public CostLine costLine(long traceId) {
+        return repository.find(traceId)
+                .map(detail -> new CostLine(detail.row().promptTokens(), detail.row().completionTokens(),
+                        detail.row().costTotal()))
+                .orElse(CostLine.EMPTY);
+    }
+
+    /** 账本里的一条成本读数；账本行不存在时全 0（评测不因为少一条账而失败）。 */
+    public record CostLine(long promptTokens, long completionTokens, BigDecimal costTotal) {
+
+        static final CostLine EMPTY = new CostLine(0, 0, null);
+    }
+
+    /**
      * 读当前单价。解析不出来就当成"没配"——单价是运营填的自由文本，
      * 为一个填错的数字让整次问答失败，代价完全不对等。
      */

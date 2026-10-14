@@ -34,7 +34,23 @@ public final class DocumentVisibility {
         return docStatus != null && docStatus.contains("草案");
     }
 
-    static boolean isAdminRole(String roleCode) {
+    /**
+     * 「这一行文档按状态对这个身份可见吗」——**列表与查看共用一份口径**：
+     * 管理员看全部（域级与文档级 ACL 仍由调用方另行判定，否则没法在列表里审核待审草案），
+     * 其余人看"现行 + 自己上传的草案"。
+     *
+     * <p>与 {@code DocumentRepository.findVisible} 的 SQL 一一对应。查看原文、看图片资产这类
+     * "按 id 取内容"的路径必须用这一份——各写一个"只看现行"，就会出现"列表里看得到、
+     * 点查看 403"（待审草案的查看按钮曾因此必然失败）。</p>
+     */
+    public static boolean visibleByStatus(String docStatus, String uploadedBy, String username, boolean admin) {
+        if (admin) {
+            return true;
+        }
+        return isCurrent(docStatus) || (username != null && username.equalsIgnoreCase(uploadedBy));
+    }
+
+    public static boolean isAdminRole(String roleCode) {
         return roleCode != null && "admin".equals(roleCode.trim().toLowerCase(Locale.ROOT));
     }
 }

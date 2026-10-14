@@ -476,7 +476,7 @@ onMounted(() => {
           <div>
             <h2>上传文档</h2>
             <p class="desc">
-              支持 PDF / DOCX / PPTX / 图片（png/jpg/jpeg/gif/bmp）。上传会写盘并登记 manifest.json，
+              支持 PDF / DOCX / PPTX / XLSX / 图片（png/jpg/jpeg/gif/bmp）。上传会写盘并登记 manifest.json，
               然后解析并向量化；图片单独建图片索引（供「找图」）。同一「文档编号 + 版本」重复上传视为覆盖。
             </p>
           </div>
@@ -505,7 +505,7 @@ onMounted(() => {
             </select>
           </label>
           <label v-if="admin" class="field"><span>责任部门 <em>可选</em></span><input v-model="upload.ownerDept" /></label>
-          <label class="field"><span>文件</span><input type="file" accept=".pdf,.docx,.png,.jpg,.jpeg,.gif,.bmp" @change="onFileChosen" /></label>
+          <label class="field"><span>文件</span><input type="file" accept=".pdf,.docx,.pptx,.xlsx,.png,.jpg,.jpeg,.gif,.bmp" @change="onFileChosen" /></label>
         </div>
         <p v-if="!admin" class="desc upload-hint">
           提交后进入「待审核」（草案·未生效），管理员通过后才进检索。状态与密级由管理员审核时确定。

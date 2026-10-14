@@ -65,14 +65,14 @@ public final class AnswerComposer {
         }
         return new GeneratedAnswer(modelText.strip(), citations(check.cited(), evidences), false, null,
                 retrieval.accessNotice(), List.copyOf(evidences),
-                diagnostics(meta, null, evidenceCount, check.cited().size(), List.of()));
+                diagnostics(meta, null, evidenceCount, check.cited().size(), List.of()), null);
     }
 
     private static GeneratedAnswer refuse(String rule, String text, int evidenceCount, List<Integer> outOfRange,
                                           Meta meta, List<Evidence> evidences) {
         // 拒答时提示已经并进 text（见 unableText），notice 保持 null，否则同一句话会出现两遍
         return new GeneratedAnswer(text, List.of(), true, text, null, List.copyOf(evidences),
-                diagnostics(meta, rule, evidenceCount, 0, outOfRange));
+                diagnostics(meta, rule, evidenceCount, 0, outOfRange), null);
     }
 
     /** 引用只做"翻译"：把编号换成可定位的来源。序号的合法性已由 {@link CitationCheck} 保证。 */

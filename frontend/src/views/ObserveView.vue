@@ -15,6 +15,7 @@ const busy = ref(false)
 const error = ref('')
 const detail = ref(null)
 const detailLoading = ref(false)
+const feedback = ref(null)
 
 const totalTokens = computed(() => {
   if (!summary.value) return 0
@@ -31,13 +32,16 @@ async function load() {
   busy.value = true
   error.value = ''
   try {
-    const [data, priceData] = await Promise.all([
+    const [data, priceData, feedbackData] = await Promise.all([
       observeApi.traces({ limit: 50, domainCode: domainCode.value, refused: refusedFilter.value }),
-      observeApi.price()
+      observeApi.price(),
+      // 反馈汇总单独取：它是全量统计，不该跟着"筛了哪个域"变
+      observeApi.feedbackSummary().catch(() => null)
     ])
     traces.value = data.traces || []
     summary.value = data.summary
     price.value = priceData
+    feedback.value = feedbackData
   } catch (e) {
     error.value = e.message
   } finally {
@@ -133,6 +137,27 @@ onMounted(async () => {
         <b>{{ fmtCost(summary.costTotal) }}</b>
         <em v-if="summary.unpricedCount > 0">另有 {{ summary.unpricedCount }} 条未计费</em>
       </div>
+      <div v-if="feedback">
+        <span>满意率</span>
+        <b>{{ feedback.rated ? `${feedback.likeRate}%` : '—' }}</b>
+        <em v-if="feedback.rated">👍 {{ feedback.likes }} / 👎 {{ feedback.dislikes }}（共 {{ feedback.rated }} 条评价）</em>
+        <em v-else>还没有用户评价</em>
+      </div>
+    </section>
+
+    <!-- 差评原因分布：这是最直接的"该改哪里"的信号 —— 答非所问多半是检索，内容不全多半是切分 -->
+    <section v-if="feedback && feedback.dislikes > 0" class="card">
+      <header class="card-head">
+        <div>
+          <h2>差评原因</h2>
+          <p class="desc">用户点踩时选的标签（全量统计，不受上面的筛选影响）。</p>
+        </div>
+      </header>
+      <div class="reasons">
+        <span v-for="(count, reason) in feedback.reasons" :key="reason" class="reason">
+          {{ reason }} <b>{{ count }}</b>
+        </span>
+      </div>
     </section>
 
     <section class="card">
@@ -166,6 +191,7 @@ onMounted(async () => {
               <th>证据</th>
               <th>引用</th>
               <th>最高分</th>
+              <th>评价</th>
               <th>token</th>
               <th>耗时</th>
               <th>费用</th>
@@ -185,6 +211,11 @@ onMounted(async () => {
               <td class="nowrap">{{ row.evidenceCount }}</td>
               <td class="nowrap">{{ row.citedCount }}</td>
               <td class="nowrap">{{ fmtScore(row.bestScore) }}</td>
+              <td class="nowrap">
+                <span v-if="row.rating === 1" title="有用">👍</span>
+                <span v-else-if="row.rating === -1" :title="row.feedbackReason || '没用'">👎 {{ row.feedbackReason }}</span>
+                <span v-else class="muted">—</span>
+              </td>
               <td class="nowrap">{{ row.promptTokens }}/{{ row.completionTokens }}</td>
               <td class="nowrap">{{ row.totalElapsedMs }}ms</td>
               <td class="nowrap">{{ fmtCost(row.costTotal) }}</td>
@@ -209,6 +240,11 @@ onMounted(async () => {
 
       <div class="snapshot">
         <div><span>问题</span><b class="break">{{ detail.row.question }}</b></div>
+        <div><span>用户评价</span>
+          <b v-if="detail.row.rating === 1">👍 有用</b>
+          <b v-else-if="detail.row.rating === -1">👎 没用（{{ detail.row.feedbackReason || '未填原因' }}）</b>
+          <b v-else class="muted">未评价</b>
+        </div>
         <div><span>检索 topN / 内核 topN</span><b>{{ detail.requestedTopN }} / {{ detail.kernelTopN }}</b></div>
         <div><span>召回下限 / 作答下限</span><b>{{ detail.minScore }} / {{ detail.answerMinScore }}</b></div>
         <div><span>内核命中</span><b>{{ detail.kernelHits }}</b></div>
@@ -279,4 +315,19 @@ onMounted(async () => {
   word-break: break-all;
   color: var(--ink-2);
 }
+
+.reasons { display: flex; gap: 10px; flex-wrap: wrap; padding: 4px 18px 16px; }
+
+.reason {
+  font-size: 13px;
+  color: var(--ink-2);
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 3px 12px;
+}
+
+.reason b { color: var(--brand); margin-left: 4px; }
+
+.muted { color: var(--muted); font-weight: 400; }
 </style>

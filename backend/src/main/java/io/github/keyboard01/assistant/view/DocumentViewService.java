@@ -18,6 +18,10 @@ import org.springframework.stereotype.Service;
 import io.github.keyboard01.assistant.domain.DomainService;
 import io.github.keyboard01.assistant.ingest.DocumentRepository;
 import io.github.keyboard01.assistant.ingest.IngestService;
+import io.github.keyboard01.assistant.media.AssetStore;
+import io.github.keyboard01.assistant.media.ImageAssetRepository;
+import io.github.keyboard01.assistant.media.ImageThumbs;
+import io.github.keyboard01.assistant.media.MediaModels;
 import io.github.keyboard01.assistant.security.AccessFilter;
 import io.github.keyboard01.assistant.security.AppUser;
 import io.github.keyboard01.assistant.security.CurrentUser;
@@ -54,6 +58,8 @@ public class DocumentViewService {
     private final ViewLogRepository viewLog;
     private final IngestService ingest;
     private final DomainService domainService;
+    private final ImageAssetRepository assets;
+    private final AssetStore assetStore;
 
     /**
      * DOCX 重排结果的缓存。**只缓存未盖章的字节**——盖章后的成品带着某个账号的水印，
@@ -69,13 +75,15 @@ public class DocumentViewService {
 
     public DocumentViewService(DocumentRepository documents, DocumentAclRepository acls,
                                ViewChunkRepository chunks, ViewLogRepository viewLog, IngestService ingest,
-                               DomainService domainService) {
+                               DomainService domainService, ImageAssetRepository assets, AssetStore assetStore) {
         this.documents = documents;
         this.acls = acls;
         this.chunks = chunks;
         this.viewLog = viewLog;
         this.ingest = ingest;
         this.domainService = domainService;
+        this.assets = assets;
+        this.assetStore = assetStore;
     }
 
     /** 下载/预览用的 PDF 字节与建议文件名。 */
@@ -141,6 +149,9 @@ public class DocumentViewService {
     /**
      * 非 PDF 的文本文档（DOCX、PPTX…）先按片段重排成 PDF 再盖章。缓存键带上 contentHash：
      * 文件内容变了就是另一次转换，用旧的排版会把新内容藏起来。
+     *
+     * <p>PPTX 的图片走 sidecar：不入 chunk 正文（切分与检索零接触），这里按 {@code image_asset.page}
+     * （与块的 pageFrom 同为幻灯片号）取出、降采样后交给 {@link DocxToPdf} 插回对应幻灯片之后。</p>
      */
     private byte[] converted(DocumentRepository.Row row) {
         String key = row.id() + ":" + row.contentHash();
@@ -156,12 +167,35 @@ public class DocumentViewService {
                         "文档体积 " + (size / 1024 / 1024) + "MB 超过在线查看上限 20MB，请下载后离线查看");
             }
             List<Block> blocks = withSectionHeads(chunks.findByDocument(row.id()), row.title());
-            byte[] rendered = DocxToPdf.render(row.title(), row.docNo(), row.version(), blocks);
+            byte[] rendered = DocxToPdf.render(row.title(), row.docNo(), row.version(), blocks,
+                    slideImages(row.id()));
             convertedCache.put(key, rendered);
             return rendered;
         } catch (IOException ex) {
             throw new IllegalStateException("DOCX 转 PDF 失败：" + ex.getMessage(), ex);
         }
+    }
+
+    /** 文档的所有图片，按 asset_index（幻灯片出现顺序）。单张失败跳过，不挡整份 PDF。 */
+    private List<DocxToPdf.SlideImage> slideImages(long documentId) {
+        List<DocxToPdf.SlideImage> images = new ArrayList<>();
+        for (MediaModels.Asset asset : assets.findByDocument(documentId)) {
+            try {
+                byte[] bytes = assetStore.read(assetStore.assetPath(asset.contentHash(), asset.ext()));
+                if (bytes == null || bytes.length == 0) {
+                    continue;
+                }
+                // 降采样到 1600px JPEG：重排 PDF 里够看，且避免 4000px PNG 走无损嵌入把 PDF 撑爆；
+                // 失败时返回原字节（DocxToPdf 里按实际内容兜底解码）
+                bytes = ImageThumbs.downscale(bytes, 1600, "jpg");
+                images.add(new DocxToPdf.SlideImage(asset.page(), bytes, "jpg",
+                        asset.width(), asset.height()));
+            } catch (IOException | RuntimeException ex) {
+                log.warn("[查看] 文档 {} 图片 asset={} 读取失败，重排 PDF 跳过该图：{}",
+                        documentId, asset.id(), ex.getMessage());
+            }
+        }
+        return images;
     }
 
     private Path resolveSource(DocumentRepository.Row row) {
@@ -221,6 +255,10 @@ public class DocumentViewService {
     /**
      * 判定 + 留痕。没通过就抛 {@link DocumentAccessDeniedException}，且已经写过一行 DENIED。
      *
+     * <p>状态口径与文档列表完全一致（{@link DocumentVisibility#visibleByStatus}）：管理员看全部
+     * （审核待审草案时必须能打开看内容），其余人看"现行 + 自己上传的"。曾经这里只放行"现行"，
+     * 结果是待审核列表里的「查看」按钮对每一份草案都必然 403。</p>
+     *
      * <p>图片文档不能走「原文/正文/下载」三个入口：它们是按 PDF/DOCX 处理的
      * （`sourceBytes` 会对 PNG 调 `PDDocument.load` 打水印 → 500）。这里挡下并给可读的 400。</p>
      */
@@ -229,8 +267,9 @@ public class DocumentViewService {
         String watermark = watermarkOf(user.username());
         DocumentRepository.Row row = documents.findById(documentId).orElse(null);
         boolean allowed = row != null
+                && DocumentVisibility.visibleByStatus(row.docStatus(), row.uploadedBy(), user.username(),
+                        DocumentVisibility.isAdminRole(user.roleCode()))
                 && domainService.canAccess(user.subject(), row.domainCode())
-                && DocumentVisibility.isCurrent(row.docStatus())
                 && AccessFilter.of(user.subject(), AccessFilter.DEFAULT_ALIAS)
                         .allows(acls.findByDocumentIds(List.of(documentId)).get(documentId));
         if (!allowed) {

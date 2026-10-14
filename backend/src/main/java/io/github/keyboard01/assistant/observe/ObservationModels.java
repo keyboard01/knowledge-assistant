@@ -44,7 +44,18 @@ public final class ObservationModels {
     public record TraceRow(long id, OffsetDateTime createdAt, String userName, String domainCode, String question,
                            boolean refused, String refusalRule, boolean insufficient, int evidenceCount,
                            int citedCount, Double bestScore, boolean modelCalled, int promptTokens,
-                           int completionTokens, long totalElapsedMs, BigDecimal costTotal, boolean priced) {
+                           int completionTokens, long totalElapsedMs, BigDecimal costTotal, boolean priced,
+                           Integer rating, String feedbackReason) {
+    }
+
+    /**
+     * 反馈汇总。
+     *
+     * <p>{@code likeRate} 的分母是**评过价的条数**，不是总条数：把没评价的算成"不满意"，
+     * 会让满意度随着"没人评价"一路下滑，那个数字没人敢用。</p>
+     */
+    public record FeedbackSummary(long rated, long likes, long dislikes, double likeRate,
+                                  java.util.Map<String, Long> reasons) {
     }
 
     /**

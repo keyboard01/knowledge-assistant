@@ -84,12 +84,11 @@ foreach ($item in $questions) {
     }
     $json = $response.Json
     $squashed = Squash $response.Raw
-    # 账本里最新几条就是刚刚这次：最高分只有账本记（接口响应里不带它）
+    # 账本：答案里直接带 traceId，按 id 精确取（不再靠"最近 3 条 + 问题原文匹配"——
+    # 同一问题被问过两次时那种匹配会取错行）。最高分只有账本记，接口响应里不带它。
     $trace = $null
-    if ($response.Status -eq 200) {
-        $latest = (Call 'GET' '/observe/traces?limit=3' $tokens.admin $null).Json.traces
-        $mine = @($latest | Where-Object { $_.question -eq $item.question })
-        if ($mine.Count -gt 0) { $trace = $mine[0] }
+    if ($response.Status -eq 200 -and $json.traceId) {
+        $trace = (Call 'GET' "/observe/traces/$($json.traceId)" $tokens.admin $null).Json.row
     }
 
     $fail = @()
