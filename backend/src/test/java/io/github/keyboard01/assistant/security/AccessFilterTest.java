@@ -102,4 +102,42 @@ class AccessFilterTest {
         assertTrue(filter.sql().contains("'ALL'"));
         assertEquals(List.of(), filter.params());
     }
+
+    // ===== S5：Key 自身范围谓词（多项目接入） =====
+
+    @Test
+    @DisplayName("Key 不限定时 SQL 形状不变：与无 Key 的查询逐位一致")
+    void noKeyScopeKeepsSqlUntouched() {
+        AccessFilter without = AccessFilter.of(DEMO, "d", KeyScope.NONE);
+        assertEquals(AccessFilter.of(DEMO, "d").sql(), without.sql());
+        assertEquals(AccessFilter.of(DEMO, "d").params(), without.params());
+    }
+
+    @Test
+    @DisplayName("Key 绑租户：下推租户白名单谓词，参数为绑定编码")
+    void keyTenantBindingIsPushedDown() {
+        AccessFilter filter = AccessFilter.of(DEMO, "d", new KeyScope(Set.of("projA", "projB"), Set.of(), null));
+        assertTrue(filter.sql().contains("knowledge_domain kd"), "经域表判 Key 范围：" + filter.sql());
+        assertTrue(filter.sql().contains("kd.tenant_code in (?,?)"));
+        assertTrue(filter.params().containsAll(java.util.List.of("projA", "projB")));
+        assertEquals(filter.params().size(), filter.sql().split("\\?", -1).length - 1,
+                "占位符数量必须与参数一致");
+    }
+
+    @Test
+    @DisplayName("Key 绑域：即使租户不限，也要收窄到名单内的域")
+    void keyDomainBindingIsPushedDown() {
+        AccessFilter filter = AccessFilter.of(ADMIN, "d", new KeyScope(Set.of(), Set.of("projA-docs"), null));
+        assertTrue(filter.sql().contains("kd.code in (?)"));
+        assertTrue(filter.params().contains("projA-docs"));
+        assertFalse(filter.sql().contains("kd.tenant_code"), "租户不限时不加租户条件：" + filter.sql());
+    }
+
+    @Test
+    @DisplayName("Key 范围与租户谓词是叠加关系：普通身份两者都带")
+    void keyScopeComposesWithTenantPredicate() {
+        AccessFilter filter = AccessFilter.of(DEMO, "d", new KeyScope(Set.of("projA"), Set.of(), null));
+        assertTrue(filter.sql().contains("tenant_member"), "账号侧租户谓词保留");
+        assertTrue(filter.sql().contains("kd.tenant_code in (?)"), "Key 侧收窄追加");
+    }
 }

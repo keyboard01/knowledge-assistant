@@ -185,6 +185,7 @@ onMounted(async () => {
             <tr>
               <th>时间</th>
               <th>用户</th>
+              <th>终端用户</th>
               <th>知识域</th>
               <th>问题</th>
               <th>结论</th>
@@ -202,6 +203,7 @@ onMounted(async () => {
             <tr v-for="row in traces" :key="row.id">
               <td class="nowrap">{{ fmtTime(row.createdAt) }}</td>
               <td class="nowrap">{{ row.userName }}</td>
+              <td class="nowrap" :class="{ 'muted': !row.endUser }">{{ row.endUser || '—' }}</td>
               <td class="nowrap">{{ domainName(row.domainCode) }}</td>
               <td class="question">{{ row.question }}</td>
               <td>

@@ -26,7 +26,7 @@ import io.github.keyboard01.assistant.retrieval.Evidence;
 public class QaTraceRepository {
 
     private static final String ROW_COLUMNS = """
-            id, created_at, user_name, domain_code, question, refused, refusal_rule, insufficient,
+            id, created_at, user_name, end_user, domain_code, question, refused, refusal_rule, insufficient,
             evidence_count, cited_count, best_score, model_called, prompt_tokens, completion_tokens,
             total_elapsed_ms, cost_total, rating, feedback_reason
             """;
@@ -35,6 +35,7 @@ public class QaTraceRepository {
             rs.getLong("id"),
             rs.getObject("created_at", java.time.OffsetDateTime.class),
             rs.getString("user_name"),
+            rs.getString("end_user"),
             rs.getString("domain_code"),
             rs.getString("question"),
             rs.getBoolean("refused"),
@@ -68,7 +69,7 @@ public class QaTraceRepository {
         var generation = answer.diagnostics();
         return jdbc.queryForObject("""
                 insert into qa_trace (
-                    user_name, domain_code, question, access_filter,
+                    user_name, end_user, domain_code, question, access_filter,
                     requested_top_n, min_score, answer_min_score, kernel_top_n, kernel_hits,
                     dropped_unauthorized, dropped_unknown, dropped_not_indexed, dropped_duplicate,
                     evidence_count, document_count, best_score, version_conflict, insufficient, retrieval_elapsed_ms,
@@ -76,7 +77,7 @@ public class QaTraceRepository {
                     prompt_tokens, completion_tokens, generation_elapsed_ms, total_elapsed_ms,
                     prompt_price_per_1k, completion_price_per_1k, cost_total
                 ) values (
-                    ?, ?, ?, ?,
+                    ?, ?, ?, ?, ?,
                     ?, ?, ?, ?, ?,
                     ?, ?, ?, ?,
                     ?, ?, cast(? as numeric), ?, ?, ?,
@@ -85,7 +86,7 @@ public class QaTraceRepository {
                     cast(? as numeric), cast(? as numeric), cast(? as numeric)
                 ) returning id
                 """, Long.class,
-                input.userName(), input.domainCode(), input.question(), retrieval.accessFilter(),
+                input.userName(), input.endUser(), input.domainCode(), input.question(), retrieval.accessFilter(),
                 retrieval.requestedTopN(), retrieval.minScore(), retrieval.answerMinScore(),
                 retrieval.kernelTopN(), retrieval.kernelHits(),
                 retrieval.droppedUnauthorized(), retrieval.droppedUnknown(), retrieval.droppedNotIndexed(),

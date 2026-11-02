@@ -1,11 +1,14 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
-import { adminApi } from '../../api/client.js'
+import { adminApi, domainsApi } from '../../api/client.js'
 
 // 对外接入：API Key 管理 + MCP 端点信息。
 // Key 绑定的是已有账号，权限由该账号的角色/部门决定（fail-closed 复用检索权限）。
+// S5：Key 可再绑定租户/域范围（空=不限），实际可见范围 = 账号可见 ∩ Key 绑定。
 const keys = ref([])
 const users = ref([])
+const tenants = ref([])
+const domains = ref([])
 const error = ref('')
 const notice = ref('')
 const busy = ref('')
@@ -14,6 +17,7 @@ const form = ref(null)
 const formError = ref('')
 const formBusy = ref(false)
 const revealed = ref(null)
+const scopeForm = ref(null)
 
 const mcpEndpoint = computed(() => `${window.location.origin}/api/mcp`)
 
@@ -26,16 +30,18 @@ const TOOLS = [
 async function load() {
   error.value = ''
   try {
-    const [k, u] = await Promise.all([adminApi.apiKeys(), adminApi.users()])
+    const [k, u, d] = await Promise.all([adminApi.apiKeys(), adminApi.users(), domainsApi.list()])
     keys.value = k.keys
     users.value = u.users
+    tenants.value = u.tenants || []
+    domains.value = d.domains || []
   } catch (e) {
     error.value = e.message
   }
 }
 
 function openCreate() {
-  form.value = { name: '', userId: users.value[0]?.id ?? '' }
+  form.value = { name: '', userId: users.value[0]?.id ?? '', tenantCodes: [], domainCodes: [] }
   formError.value = ''
   revealed.value = null
 }
@@ -45,7 +51,12 @@ async function submit() {
   formBusy.value = true
   formError.value = ''
   try {
-    const res = await adminApi.createApiKey({ name: f.name, userId: Number(f.userId) })
+    const res = await adminApi.createApiKey({
+      name: f.name,
+      userId: Number(f.userId),
+      tenantCodes: f.tenantCodes,
+      domainCodes: f.domainCodes
+    })
     revealed.value = { name: f.name, key: res.key, client: res.client }
     form.value = null
     await load()
@@ -54,6 +65,42 @@ async function submit() {
   } finally {
     formBusy.value = false
   }
+}
+
+function openScope(key) {
+  scopeForm.value = {
+    id: key.id,
+    name: key.name,
+    tenantCodes: [...(key.tenantCodes || [])],
+    domainCodes: [...(key.domainCodes || [])]
+  }
+  formError.value = ''
+}
+
+async function submitScope() {
+  const f = scopeForm.value
+  formBusy.value = true
+  formError.value = ''
+  try {
+    await adminApi.updateApiKeyScope(f.id, { tenantCodes: f.tenantCodes, domainCodes: f.domainCodes })
+    scopeForm.value = null
+    notice.value = `已更新「${f.name}」的范围绑定`
+    await load()
+  } catch (e) {
+    formError.value = e.message
+  } finally {
+    formBusy.value = false
+  }
+}
+
+function scopeLabel(key) {
+  const t = key.tenantCodes || []
+  const d = key.domainCodes || []
+  if (!t.length && !d.length) return '不限'
+  const parts = []
+  if (t.length) parts.push(`租户 ${t.join('、')}`)
+  if (d.length) parts.push(`域 ${d.join('、')}`)
+  return parts.join(' · ')
 }
 
 async function toggle(key) {
@@ -120,16 +167,18 @@ onMounted(load)
       <div class="table-wrap">
         <table class="grid">
           <thead>
-            <tr><th>名称</th><th>前缀</th><th>绑定账号</th><th>状态</th><th>最近使用</th><th></th></tr>
+            <tr><th>名称</th><th>前缀</th><th>绑定账号</th><th>范围绑定</th><th>状态</th><th>最近使用</th><th></th></tr>
           </thead>
           <tbody>
             <tr v-for="key in keys" :key="key.id">
               <td>{{ key.name }}</td>
               <td><code>{{ key.keyPrefix }}…</code></td>
               <td>{{ key.username || key.userId }}<span v-if="key.displayName" class="muted-soft">{{ key.displayName }}</span></td>
+              <td><span class="scope-cell">{{ scopeLabel(key) }}</span></td>
               <td><span :class="['pill', key.enabled ? 'ok' : 'err']">{{ key.enabled ? '启用' : '停用' }}</span></td>
               <td>{{ formatTime(key.lastUsedAt) }}</td>
               <td class="row-actions">
+                <button class="btn tiny" @click="openScope(key)">改范围</button>
                 <button class="btn tiny" :disabled="busy === `toggle-${key.id}`" @click="toggle(key)">
                   {{ key.enabled ? '停用' : '启用' }}
                 </button>
@@ -176,12 +225,56 @@ onMounted(load)
               </option>
             </select>
           </label>
+          <label class="field">
+            <span>租户范围（可多选，不选=不限）</span>
+            <select v-model="form.tenantCodes" multiple size="3">
+              <option v-for="t in tenants" :key="t" :value="t">{{ t }}</option>
+            </select>
+          </label>
+          <label class="field">
+            <span>知识域范围（可多选，不选=不限）</span>
+            <select v-model="form.domainCodes" multiple size="5">
+              <option v-for="d in domains" :key="d.code" :value="d.code">{{ d.code }}（{{ d.name }}）</option>
+            </select>
+          </label>
         </div>
+        <p class="desc scope-hint">实际可见范围 = 账号可见 ∩ Key 绑定；绑定后，越过范围的调用返回 403。</p>
         <div v-if="formError" class="banner err">{{ formError }}</div>
         <footer class="modal-foot">
           <button class="btn" @click="form = null">取消</button>
           <button class="btn primary" :disabled="formBusy" @click="submit">
             {{ formBusy ? '创建中…' : '创建' }}
+          </button>
+        </footer>
+      </section>
+    </div>
+
+    <div v-if="scopeForm" class="overlay" @click.self="scopeForm = null">
+      <section class="modal">
+        <header class="modal-head">
+          <div><h2>改范围绑定：{{ scopeForm.name }}</h2></div>
+          <button class="btn tiny" @click="scopeForm = null">关闭</button>
+        </header>
+        <div class="fields">
+          <label class="field">
+            <span>租户范围（可多选，不选=不限）</span>
+            <select v-model="scopeForm.tenantCodes" multiple size="3">
+              <option v-for="t in tenants" :key="t" :value="t">{{ t }}</option>
+            </select>
+          </label>
+          <label class="field">
+            <span>知识域范围（可多选，不选=不限）</span>
+            <select v-model="scopeForm.domainCodes" multiple size="5">
+              <option v-for="d in domains" :key="d.code" :value="d.code">{{ d.code }}（{{ d.name }}）</option>
+            </select>
+          </label>
+        </div>
+        <p class="desc scope-hint">实际可见范围 = 账号可见 ∩ Key 绑定；绑定后，越过范围的调用返回 403。</p>
+        <div v-if="formError" class="banner err">{{ formError }}</div>
+        <footer class="modal-foot">
+          <button class="btn" @click="scopeForm = null">取消</button>
+          <button class="btn primary" :disabled="formBusy" @click="submitScope">
+            {{ formBusy ? '保存中…' : '保存' }}
           </button>
         </footer>
       </section>
@@ -251,5 +344,14 @@ onMounted(load)
   border-radius: var(--r-sm);
   word-break: break-all;
   font-size: 13px;
+}
+
+.scope-cell {
+  font-size: 12.5px;
+  color: var(--muted);
+}
+
+.scope-hint {
+  margin: 8px 2px 0;
 }
 </style>

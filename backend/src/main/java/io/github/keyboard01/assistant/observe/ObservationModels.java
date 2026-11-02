@@ -36,12 +36,13 @@ public final class ObservationModels {
     }
 
     /** 写一条账本的入参。检索账本与生成账本各自已经成型，这里只做搬运，不重新计算。 */
-    public record TraceInput(String userName, String domainCode, String question,
+    public record TraceInput(String userName, String domainCode, String question, String endUser,
                              RetrievalResult retrieval, GeneratedAnswer answer, PriceSnapshot price) {
     }
 
-    /** 列表行：够看出"怎么回事"，不含逐条证据。 */
-    public record TraceRow(long id, OffsetDateTime createdAt, String userName, String domainCode, String question,
+    /** 列表行：够看出"怎么回事"，不含逐条证据。endUser 是终端用户弱断言（S5），会话调用为 null。 */
+    public record TraceRow(long id, OffsetDateTime createdAt, String userName, String endUser,
+                           String domainCode, String question,
                            boolean refused, String refusalRule, boolean insufficient, int evidenceCount,
                            int citedCount, Double bestScore, boolean modelCalled, int promptTokens,
                            int completionTokens, long totalElapsedMs, BigDecimal costTotal, boolean priced,

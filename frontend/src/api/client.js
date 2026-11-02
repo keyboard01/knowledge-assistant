@@ -74,6 +74,7 @@ export const adminApi = {
     request(`/admin/domains/${code}/acl`, { method: 'PUT', body: JSON.stringify({ rules }) }),
   // 对外 API Key（创建响应里的 key 明文只出现一次）
   apiKeys: () => request('/admin/api-keys'),
+  updateApiKeyScope: (id, payload) => request(`/admin/api-keys/${id}/scope`, { method: 'PUT', body: JSON.stringify(payload) }),
   createApiKey: (payload) => request('/admin/api-keys', { method: 'POST', body: JSON.stringify(payload) }),
   setApiKeyEnabled: (id, enabled) =>
     request(`/admin/api-keys/${id}/enabled`, { method: 'POST', body: JSON.stringify({ enabled }) }),

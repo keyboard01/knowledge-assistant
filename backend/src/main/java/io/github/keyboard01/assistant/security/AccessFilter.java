@@ -28,7 +28,15 @@ public record AccessFilter(AccessSubject subject, String sql, List<Object> param
         params = List.copyOf(params);
     }
 
+    /** 生产入口：Key 的自身范围从请求上下文取（多项目接入 S5），调用方不必逐处传。 */
     public static AccessFilter of(AccessSubject subject, String documentAlias) {
+        return of(subject, documentAlias, CurrentKeyScope.get());
+    }
+
+    /**
+     * 纯入口：Key 范围显式传入，供单测与无请求上下文的场景。生产一律走两参重载。
+     */
+    public static AccessFilter of(AccessSubject subject, String documentAlias, KeyScope keyScope) {
         String alias = documentAlias == null || documentAlias.isBlank() ? DEFAULT_ALIAS : documentAlias.trim();
         StringBuilder sql = new StringBuilder();
         List<Object> params = new ArrayList<>();
@@ -57,6 +65,22 @@ public record AccessFilter(AccessSubject subject, String sql, List<Object> param
                 params.add(param);
             }
         }
+        // Key 自身范围（多项目接入 S5）：与租户谓词同一条哲学——织进这一处，
+        // 用到 filter.sql() 的 8 条查询自动带 Key 约束，漏写变成不可能。
+        // 账号可见 ∩ Key 绑定：账号侧放不出来的东西这里也放不出来，这里只是再收窄。
+        if (keyScope != null && keyScope.restricts()) {
+            sql.append(" and exists (select 1 from knowledge_domain kd where kd.code = ")
+                    .append(alias).append(".domain_code");
+            if (!keyScope.domainCodes().isEmpty()) {
+                sql.append(" and kd.code in (").append(placeholders(keyScope.domainCodes().size())).append(")");
+                params.addAll(keyScope.domainCodes());
+            }
+            if (!keyScope.tenantCodes().isEmpty()) {
+                sql.append(" and kd.tenant_code in (").append(placeholders(keyScope.tenantCodes().size())).append(")");
+                params.addAll(keyScope.tenantCodes());
+            }
+            sql.append(")");
+        }
         return new AccessFilter(subject, sql.toString(), params);
     }
 
@@ -80,6 +104,11 @@ public record AccessFilter(AccessSubject subject, String sql, List<Object> param
                 + " roles=" + sortedRoles(subject)
                 + " dept=" + (subject.deptCode().isEmpty() ? "(无)" : subject.deptCode())
                 + " sql=" + sql;
+    }
+
+    /** 占位符串：n=3 → "?,?,?"。绑定量随 Key 绑定走，量小，不需要 any(array) 的写法。 */
+    private static String placeholders(int n) {
+        return String.join(",", java.util.Collections.nCopies(n, "?"));
     }
 
     /** 角色顺序影响 SQL 里的占位符顺序，排序是为了让生成结果稳定、可断言。 */

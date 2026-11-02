@@ -15,7 +15,10 @@ import io.github.keyboard01.assistant.ingest.DocumentRepository;
 import io.github.keyboard01.assistant.security.AccessFilter;
 import io.github.keyboard01.assistant.security.AccessSubject;
 import io.github.keyboard01.assistant.security.AclRule;
+import io.github.keyboard01.assistant.security.CurrentKeyScope;
 import io.github.keyboard01.assistant.security.DocumentAclRepository;
+import io.github.keyboard01.assistant.security.KeyScope;
+import io.github.keyboard01.assistant.security.KeyScopeViolation;
 
 /**
  * 检索编排：召回 → 反查本地登记 → 权限过滤 → 聚合成证据 → 候选不足提示。
@@ -92,6 +95,12 @@ public class RetrievalService {
                 .orElseThrow(() -> new IllegalArgumentException("知识域不存在：" + code));
         if (!domain.enabled()) {
             throw new IllegalArgumentException("知识域已停用：" + domain.name());
+        }
+        // Key 自身范围门（多项目接入 S5）：显式指名的域越过 Key 绑定 → 403，而不是静默空结果。
+        // 这一处在 search 的唯一入口上，检索/问答/深度分析/MCP/评测全部由此覆盖。
+        KeyScope keyScope = CurrentKeyScope.get();
+        if (keyScope.restricts() && !keyScope.allowsDomain(code, domain.tenantCode())) {
+            throw new KeyScopeViolation("这枚 API Key 未被授权访问知识域：" + code);
         }
 
         AccessFilter filter = AccessFilter.of(subject, AccessFilter.DEFAULT_ALIAS);

@@ -14,6 +14,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import io.github.keyboard01.assistant.generation.GeneratedAnswer;
+import io.github.keyboard01.assistant.security.CurrentKeyScope;
 import io.github.keyboard01.assistant.observe.ObservationModels.PriceSnapshot;
 import io.github.keyboard01.assistant.observe.ObservationModels.Summary;
 import io.github.keyboard01.assistant.observe.ObservationModels.TraceDetail;
@@ -57,8 +58,9 @@ public class ObserveService {
     public Optional<Long> record(AccessSubject subject, String domainCode, String question,
                                  RetrievalResult retrieval, GeneratedAnswer answer) {
         PriceSnapshot price = currentPrice();
+        // endUser 是终端用户弱断言（S5）：只在 API Key 代表项目的调用里非空，只入账本、不判权。
         TraceInput input = new TraceInput(subject.username(), domainCode, question,
-                retrieval, answer, price);
+                CurrentKeyScope.get().endUser(), retrieval, answer, price);
         BigDecimal cost = estimateCost(answer, price);
         long generationElapsedMs = Math.max(0,
                 answer.diagnostics().elapsedMs() - retrieval.diagnostics().elapsedMs());

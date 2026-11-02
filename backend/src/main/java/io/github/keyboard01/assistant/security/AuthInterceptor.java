@@ -37,7 +37,13 @@ public class AuthInterceptor implements HandlerInterceptor {
         // 先按会话令牌解析；失败后才试对外 API Key（浏览器请求一次都不会走到那一步）。
         AppUser user = authService.resolve(tokenOf(request)).orElse(null);
         if (user == null && !isAuthEndpoint(request)) {
-            user = resolveApiKey(request);
+            ApiKeyService.Resolved resolved = resolveApiKey(request);
+            if (resolved != null) {
+                user = resolved.user();
+                // Key 的自身范围只在 API Key 路径上存在；endUser 是终端用户弱断言（只入账本，不判权）。
+                CurrentKeyScope.set(new KeyScope(resolved.scope().tenantCodes(),
+                        resolved.scope().domainCodes(), request.getHeader("X-End-User")));
+            }
         }
         if (user == null) {
             write(response, HttpServletResponse.SC_UNAUTHORIZED, "未登录或会话已过期，请重新登录");
@@ -55,9 +61,9 @@ public class AuthInterceptor implements HandlerInterceptor {
 
     /**
      * 外部调用：{@code X-API-Key} 头优先，其次把同一凭据（{@code Authorization: Bearer <key>}）当密钥试一次
-     * ——MCP 客户端习惯用 Bearer 传密钥。
+     * ——MCP 客户端习惯用 Bearer 传密钥。解析成功时由调用方把 Key 的自身范围写入请求上下文。
      */
-    private AppUser resolveApiKey(HttpServletRequest request) {
+    private ApiKeyService.Resolved resolveApiKey(HttpServletRequest request) {
         String explicit = request.getHeader("X-API-Key");
         if (explicit != null && !explicit.isBlank()) {
             return apiKeyService.resolve(explicit.trim()).orElse(null);
@@ -78,6 +84,7 @@ public class AuthInterceptor implements HandlerInterceptor {
     public void afterCompletion(HttpServletRequest request, HttpServletResponse response, Object handler,
                                 Exception ex) {
         CurrentUser.clear();
+        CurrentKeyScope.clear();
     }
 
     /** 令牌优先取 Authorization: Bearer，其次退化到 X-Session-Token（curl 与 SSE 更方便）。 */
