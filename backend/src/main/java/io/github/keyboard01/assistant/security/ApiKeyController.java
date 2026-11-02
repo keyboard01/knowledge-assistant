@@ -15,7 +15,7 @@ import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
- * 对外 API Key 管理（admin）。绑定的是**已有账号**，权限即该账号的角色/部门，所以这里不设 scope。
+ * 对外 API Key 管理（admin）。绑定的是**已有账号**；动作权限仍由该账号的角色/部门决定，这里只管范围。
  *
  * <p>S5 起支持自身范围绑定（{@code tenantCodes}/{@code domainCodes}，空或不传=不限）：
  * 绑定账号可能横跨多个租户，Key 绑定把它收窄到指定范围，见 {@link KeyScope}。</p>

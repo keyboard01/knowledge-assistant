@@ -22,7 +22,7 @@ import io.github.keyboard01.assistant.view.DocumentViewModels.ContentView;
 import io.github.keyboard01.assistant.view.DocumentViewService;
 
 /**
- * MCP 的三个工具，全部走既有服务、用 {@link CurrentUser} 的身份：
+ * MCP 的四个工具，全部走既有服务、用 {@link CurrentUser} 的身份：
  * 可见范围与问答完全一致（域级 + 文档级 ACL + 现行状态），MCP 不是第二条权限路径。
  */
 @Component
