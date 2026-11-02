@@ -8,9 +8,12 @@
   4. 数字单元格：取显示值（不能变成 500.0 这种底层浮点写法）
 """
 from datetime import date
+from pathlib import Path
+
 from openpyxl import Workbook
 
-OUT = r"d:/个人/test-project/XLSX表格验证样例.xlsx"
+# 输出到仓库根目录，不写死本机路径：换台机器 clone 下来也能直接跑
+OUT = Path(__file__).resolve().parents[1] / "XLSX表格验证样例.xlsx"
 
 workbook = Workbook()
 

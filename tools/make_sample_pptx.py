@@ -9,6 +9,8 @@
   5. 纯文本对照页：验证没有图片时排版与从前一致
 """
 import io
+from pathlib import Path
+
 from PIL import Image, ImageDraw, ImageFont
 from pptx import Presentation
 from pptx.util import Inches, Pt, Emu
@@ -16,7 +18,8 @@ from pptx.dml.color import RGBColor
 from pptx.enum.text import PP_ALIGN
 
 FONT_PATH = "C:/Windows/Fonts/simhei.ttf"
-OUT = r"d:/个人/test-project/PPTX图片验证样例.pptx"
+# 输出到仓库根目录，不写死本机路径：换台机器 clone 下来也能直接跑
+OUT = Path(__file__).resolve().parents[1] / "PPTX图片验证样例.pptx"
 
 
 def font(size):
